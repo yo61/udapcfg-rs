@@ -10,6 +10,7 @@ description = "Squeezebox UDAP protocol client"
 
 [dependencies]
 async-trait.workspace = true
+netdev.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
