@@ -3,7 +3,7 @@
 use clap::Parser;
 use std::io::Write;
 use std::process::ExitCode;
-use udap_cli::{Cli, ClientFactory, run};
+use udap_cli::{Cli, ClientFactory, build_client, run};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -28,20 +28,12 @@ async fn main() -> ExitCode {
     let bind_interface = cli.bind_interface.clone();
     let all_interfaces = cli.all_interfaces;
     let factory: ClientFactory = Box::new(move || {
-        let mut client = if let Some(name) = bind_interface.as_deref() {
-            udap::Client::for_interface(name, udap::PORT)?
-        } else if all_interfaces {
-            // TODO(M3 task 4): replace with Client::for_all_interfaces once
-            // MultiTransport lands; this arm exists only so this task
-            // compiles and its own tests pass standalone.
-            return Err(anyhow::anyhow!(
-                "--all-interfaces lands with MultiTransport in the next task"
-            ));
-        } else {
-            udap::Client::with_udp(udap::PORT)?
-        };
-        client.set_retries(retries);
-        Ok(client)
+        build_client(
+            bind_interface.as_deref(),
+            all_interfaces,
+            retries,
+            udap::PORT,
+        )
     });
 
     let mut stdout = std::io::stdout();

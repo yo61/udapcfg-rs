@@ -20,6 +20,44 @@ pub struct CliError {
 /// mock-backed client without a mutable global.
 pub type ClientFactory = Box<dyn Fn() -> Result<udap::Client, anyhow::Error>>;
 
+/// Builds the client the CLI's flags describe.
+///
+/// Extracted from `main`'s factory closure so the flag-to-client wiring
+/// itself is testable: `main.rs` is a thin, untested entry point, and
+/// before this extraction nothing exercised the code path that calls
+/// `set_retries` -- a test could delete that call and every test would
+/// still pass.
+///
+/// `port` is injectable rather than hardcoded to `udap::PORT` so tests
+/// can bind an ephemeral port (`0`) instead of colliding with anything
+/// already bound to the real UDAP port in a shared test environment;
+/// production (`main.rs`) always passes `udap::PORT`.
+///
+/// # Errors
+/// Whatever `udap::Client::for_interface` / `udap::Client::with_udp`
+/// return, plus a temporary error on the `all_interfaces` branch --
+/// `Client::for_all_interfaces` lands in the next task; until then this
+/// arm exists only so this branch compiles and its own tests pass
+/// standalone.
+pub fn build_client(
+    bind_interface: Option<&str>,
+    all_interfaces: bool,
+    retries: usize,
+    port: u16,
+) -> Result<udap::Client, anyhow::Error> {
+    let mut client = if let Some(name) = bind_interface {
+        udap::Client::for_interface(name, port)?
+    } else if all_interfaces {
+        return Err(anyhow::anyhow!(
+            "--all-interfaces lands with MultiTransport in the next task"
+        ));
+    } else {
+        udap::Client::with_udp(port)?
+    };
+    client.set_retries(retries);
+    Ok(client)
+}
+
 /// Dispatches the parsed command.
 ///
 /// # Errors
@@ -51,5 +89,29 @@ pub async fn run(
 
     match cli.command {
         Command::Discover => cmd::discover::run(make_client, cli.timeout, stdout, stderr).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Proves `--retries` reaches the client the factory builds, not just
+    /// the send-retry mechanism inside `udap::Client::discover`. Port 0
+    /// lets the OS pick an ephemeral port so this doesn't collide with
+    /// anything already bound to `udap::PORT` in a shared test
+    /// environment. Breaking the wiring inside `build_client` (deleting
+    /// its `set_retries` call, or applying the wrong value) makes this
+    /// fail, which is the point: nothing else in the suite would notice.
+    ///
+    /// `#[tokio::test]` rather than `#[test]`: `build_client`'s default
+    /// path constructs a real `tokio::net::UdpSocket`, which panics
+    /// ("there is no reactor running") without a Tokio runtime context,
+    /// even though `build_client` itself is synchronous and this test
+    /// never awaits anything.
+    #[tokio::test]
+    async fn build_client_applies_retries() {
+        let client = build_client(None, false, 3, 0).expect("default path must bind");
+        assert_eq!(client.retries(), 3);
     }
 }

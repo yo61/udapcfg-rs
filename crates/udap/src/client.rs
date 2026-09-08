@@ -64,6 +64,14 @@ impl Client {
         self.retries = n;
     }
 
+    /// The configured retry count: re-transmissions beyond each initial
+    /// send. Exposed so callers (and tests) can confirm `set_retries` was
+    /// actually applied, rather than inferring it from send counts.
+    #[must_use]
+    pub fn retries(&self) -> usize {
+        self.retries
+    }
+
     /// Every discovered device, ordered by MAC.
     #[must_use]
     pub fn devices(&self) -> Vec<&Device> {
