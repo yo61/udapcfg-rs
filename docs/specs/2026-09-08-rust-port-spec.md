@@ -427,11 +427,21 @@ broadcast filter to be inferred from whether a broadcast address happened to get
 populated — an undocumented internal detail to hang the VPN filter on. `netdev`
 is also the most actively maintained candidate (released 2026-09-04).
 
-Take it as `netdev = { version = "0.46", default-features = false }`. The
-default features pull in `gateway` detection and
-`apple-system-configuration-extra`, which drags Objective-C bindings
-(`objc2-system-configuration`) onto macOS. Disabled, the tree is `mac-addr` +
-`ipnet` + `libc`, plus netlink crates on Linux only.
+Take it as `netdev = { version = "0.46", default-features = false }`, which
+skips `gateway` detection and `android-extra`.
+
+**Corrected 2026-09-08 (M3 Task 1):** an earlier draft of this section claimed
+the flag also keeps Objective-C bindings off macOS. It does not. netdev declares
+`objc2`, `objc2-core-foundation`, `objc2-system-configuration`, `objc2-foundation`
+and `plist` under unconditional `[target.'cfg(target_os = "macos")'.dependencies]`
+sections; `apple-system-configuration-extra` only toggles sub-features *within*
+`objc2-system-configuration`, so no feature setting avoids the crates themselves.
+A macOS build pulls the full ObjC/SystemConfiguration/plist stack — verified by
+`cargo tree -p udap -e normal` and by reading netdev-0.46.2's own `Cargo.toml`.
+
+That does not change the choice: `netdev` remains the only candidate exposing
+the real `IFF_*` flags, which is what the VPN filter depends on. But the weight
+is real and a security review should know it ships.
 
 *Verify at M3:* that `flags` is still populated with default features off.
 Flags come from `getifaddrs`, so it should be, but confirm rather than assume.

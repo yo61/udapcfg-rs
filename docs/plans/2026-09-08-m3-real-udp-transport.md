@@ -80,7 +80,7 @@ In `crates/udap/Cargo.toml`, under `[dependencies]`:
 netdev.workspace = true
 ```
 
-`netdev` is already declared in the workspace root as `{ version = "0.46", default-features = false }`. Defaults would pull `gateway` detection and `apple-system-configuration-extra`, which drags Objective-C bindings onto macOS.
+`netdev` is already declared in the workspace root as `{ version = "0.46", default-features = false }`, which skips `gateway` detection and `android-extra`. Note it does **not** avoid the Objective-C bindings on macOS — those are unconditional per-target dependencies of netdev, not feature-gated. See the spec's corrected OQ-1.
 
 - [ ] **Step 2: Write the failing tests**
 
