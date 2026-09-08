@@ -30,3 +30,47 @@ jobs:
         run: cargo nextest run --all-features --no-tests=pass
       - name: Supply chain
         run: cargo deny check
+
+  # Run the same pre-commit hooks contributors run locally
+  # (.pre-commit-config.yaml). commitlint is at the commit-msg stage and is
+  # skipped by `prek run` automatically, so the job below covers it.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # The cargo-fmt hook is `language: system`, so cargo must be on PATH.
+      # Same mise pin as the check job -- see the comment there.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c  # v4.3.0
+        with:
+          version: 2026.9.2
+      - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece  # v3.0.0
+        with:
+          prek-version: 0.4.13
+
+  # Lint PR commit messages against Conventional Commits
+  # (commitlint.config.mjs).
+  commitlint:
+    name: Conventional Commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      # Job-level permissions REPLACE the workflow-level block rather than
+      # merging with it, so contents must be restated or checkout runs with
+      # contents: none. That happens to work on a public repo -- the clone
+      # succeeds unauthenticated -- but it would break the day this repo
+      # turned private, and nothing would say why.
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Fork of wagoid/commitlint-github-action; upstream is unmaintained.
+      # Digest-pinned, matching go-udap.
+      - uses: yo61/commitlint-github-action@501ff7bb31eb7133c871318c877d0e43cd1ff500  # v6.3.0 (digest-pinned)
+        with:
+          configFile: commitlint.config.mjs
