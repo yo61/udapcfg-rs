@@ -1049,7 +1049,7 @@ mise exec -- cargo nextest run -p udap multi
 
 - [ ] **Step 3: Implement**
 
-Prepend to `crates/udap/src/transport/multi.rs`:
+Prepend the module docs and the parts both designs share:
 
 ```rust
 //! Composes several transports: send fans out, recv merges.
@@ -1059,41 +1059,22 @@ Prepend to `crates/udap/src/transport/multi.rs`:
 
 use crate::transport::{Transport, TransportError};
 use async_trait::async_trait;
-use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
-
-pub struct MultiTransport {
-    children: Vec<Box<dyn Transport>>,
-    rx: Mutex<mpsc::UnboundedReceiver<(Vec<u8>, String)>>,
-    tx: mpsc::UnboundedSender<(Vec<u8>, String)>,
-    started: std::sync::Once,
-    stop: CancellationToken,
-}
-
-impl MultiTransport {
-    /// Composes `children`. Callers reject an empty list upstream so the
-    /// error can name interfaces.
-    #[must_use]
-    pub fn new(children: Vec<Box<dyn Transport>>) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
-        MultiTransport {
-            children,
-            rx: Mutex::new(rx),
-            tx,
-            started: std::sync::Once::new(),
-            stop: CancellationToken::new(),
-        }
-    }
-}
 ```
 
-> **The pump needs a design decision the plan will not make for you.** The children are owned by `MultiTransport` behind `&self`, so they cannot simply be moved into `tokio::spawn`ed tasks. Two workable shapes:
->
-> 1. Store `Vec<Arc<dyn Transport>>` instead of `Vec<Box<dyn Transport>>`, clone an `Arc` per pump task, and spawn on first `recv`.
-> 2. Do not spawn at all: implement `recv` as a `futures::future::select_all` over one `recv` future per child, which needs no channel and no `Once`.
->
-> Option 2 is smaller and has no lost-wakeup surface, but pulls in `futures`. Option 1 matches the Go structurally. **Pick one, implement it, and say in your report which and why.** The tests above constrain behaviour, not structure — they must pass either way. If you take option 1, note that `Vec<Arc<dyn Transport>>` changes `new`'s signature and the tests' `child()` helper accordingly.
+**Then choose how `recv` merges its children, and add only that design's state.** The children sit behind `&self`, so they cannot be moved into `tokio::spawn`ed tasks; that constraint is what forces the decision.
+
+| | Option 1 — spawn per child | Option 2 — `select_all` |
+| --- | --- | --- |
+| Fields | `Vec<Arc<dyn Transport>>`, `mpsc` tx/rx, a `Once`, a stop token | `Vec<Box<dyn Transport>>` only |
+| `recv` | drain the merged channel | `select_all` over one recv future per child |
+| Extra dep | none | `futures` |
+| Notes | structurally matches `multi_transport.go` | smaller; no lost-wakeup surface at all |
+
+Whichever you take, add **only** that option's fields. This repo denies warnings, so an unused `mpsc` channel or an unused `Once` left over from the other design is a build failure, not a lint nit — and `use tokio::sync::{mpsc, Mutex};` belongs in the file only if you took Option 1.
+
+The tests above constrain behaviour, not structure: both designs must pass them unchanged. **Say in your report which you took and why.** If you take Option 1, note that `Vec<Arc<dyn Transport>>` changes `new`'s signature and the tests' `child()` helper accordingly.
 
 Then `send`, `recv` and `close` per the behaviour list above, and:
 
