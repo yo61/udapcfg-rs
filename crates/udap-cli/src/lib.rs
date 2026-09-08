@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod cmd;
+pub mod output;
 
 pub use cli::{Cli, Command};
 
@@ -84,6 +85,7 @@ pub async fn run(
 
     match cli.command {
         Command::Discover => cmd::discover::run(make_client, cli.timeout, stdout, stderr).await,
+        Command::Interfaces => cmd::interfaces::run(stdout, stderr),
     }
 }
 

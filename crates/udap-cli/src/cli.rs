@@ -62,6 +62,15 @@ pub enum Command {
                             address) can hear them."
     )]
     Discover,
+
+    /// List usable network interfaces
+    #[command(
+        long_about = "List local network interfaces that can be used for UDAP discovery.\n\n\
+                            An interface is usable if it is up, has broadcast capability,\n\
+                            and has an IPv4 address. This list helps when choosing a\n\
+                            specific interface for `--bind-interface`."
+    )]
+    Interfaces,
 }
 
 /// Parses `--timeout` with Go's `time.ParseDuration` grammar.
