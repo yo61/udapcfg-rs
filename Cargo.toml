@@ -15,6 +15,12 @@ publish = false
 [workspace.dependencies]
 tokio = { version = "1.53", features = ["rt", "net", "time", "sync", "macros"] }
 tokio-util = "0.7"  # CancellationToken needs no features
+# select_all only: MultiTransport::recv races one recv future per child
+# behind &self, so children can't be moved into spawned tasks and a
+# per-child pump-plus-shared-channel is not an option. Trimmed to the
+# "std" feature (which pulls in "alloc" and "slab") so the executor,
+# channel, and compat families default-features would add stay out.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 async-trait = "0.1"
 thiserror = "2.0"
 anyhow = "1.0"

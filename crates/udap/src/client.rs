@@ -22,6 +22,8 @@ pub enum ClientError {
         "--bind-interface: {name:?} is not usable (must be up, broadcast-capable, with an IPv4 address)"
     )]
     NoSuchInterface { name: String },
+    #[error("no usable interfaces found")]
+    NoUsableInterfaces,
     #[error("bind: {0}")]
     Bind(#[from] crate::transport::TransportError),
 }
@@ -219,6 +221,35 @@ impl Client {
         })?;
         let transport = crate::transport::UdpTransport::bind_on_interface(&iface, port)?;
         Ok(Self::new(Box::new(transport)))
+    }
+
+    /// A client fanning out across every usable interface.
+    ///
+    /// Interfaces that fail to bind are skipped with a warning.
+    ///
+    /// # Errors
+    /// [`ClientError::NoUsableInterfaces`] if enumeration finds none or
+    /// none bind successfully.
+    pub fn for_all_interfaces(port: u16) -> Result<Self, ClientError> {
+        let ifaces = crate::interfaces::enumerate()?;
+        if ifaces.is_empty() {
+            return Err(ClientError::NoUsableInterfaces);
+        }
+        let mut children: Vec<Box<dyn Transport>> = Vec::new();
+        for iface in &ifaces {
+            match crate::transport::UdpTransport::bind_on_interface(iface, port) {
+                Ok(t) => children.push(Box::new(t)),
+                Err(e) => {
+                    warn!(interface = %iface.name, error = %e, "skipping interface (bind failed)");
+                }
+            }
+        }
+        if children.is_empty() {
+            return Err(ClientError::NoUsableInterfaces);
+        }
+        Ok(Self::new(Box::new(crate::transport::MultiTransport::new(
+            children,
+        ))))
     }
 }
 

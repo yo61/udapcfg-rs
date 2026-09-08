@@ -6,7 +6,9 @@
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+pub mod multi;
 pub mod udp;
+pub use multi::MultiTransport;
 pub use udp::UdpTransport;
 
 #[derive(Debug, thiserror::Error)]

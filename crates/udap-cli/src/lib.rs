@@ -34,11 +34,8 @@ pub type ClientFactory = Box<dyn Fn() -> Result<udap::Client, anyhow::Error>>;
 /// production (`main.rs`) always passes `udap::PORT`.
 ///
 /// # Errors
-/// Whatever `udap::Client::for_interface` / `udap::Client::with_udp`
-/// return, plus a temporary error on the `all_interfaces` branch --
-/// `Client::for_all_interfaces` lands in the next task; until then this
-/// arm exists only so this branch compiles and its own tests pass
-/// standalone.
+/// Whatever `udap::Client::for_interface` / `udap::Client::with_udp` /
+/// `udap::Client::for_all_interfaces` return.
 pub fn build_client(
     bind_interface: Option<&str>,
     all_interfaces: bool,
@@ -48,9 +45,7 @@ pub fn build_client(
     let mut client = if let Some(name) = bind_interface {
         udap::Client::for_interface(name, port)?
     } else if all_interfaces {
-        return Err(anyhow::anyhow!(
-            "--all-interfaces lands with MultiTransport in the next task"
-        ));
+        udap::Client::for_all_interfaces(port)?
     } else {
         udap::Client::with_udp(port)?
     };
