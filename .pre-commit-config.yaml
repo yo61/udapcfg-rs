@@ -1,0 +1,36 @@
+# Hooks contributors run locally; the CI `lint` job runs the same set with
+# `prek run --all-files`. commitlint is a commit-msg hook that `prek run`
+# skips, so the `Conventional Commits` job covers it separately.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.26.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies: ['@commitlint/config-conventional']
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+  - repo: https://github.com/woodruffw/zizmor-pre-commit
+    rev: v1.29.0
+    hooks:
+      - id: zizmor
+  - repo: local
+    hooks:
+      # Formatting only. clippy is deliberately absent: it takes minutes on
+      # this workspace and the `check` job already runs it with -D warnings.
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --check
+        language: system
+        types: [rust]
+        pass_filenames: false
