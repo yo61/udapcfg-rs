@@ -169,3 +169,17 @@ mod tests {
         assert!(matches!(err, GetDataError::TruncatedHeader { .. }));
     }
 }
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        // This decoder runs on network input from an untrusted LAN peer.
+        #[test]
+        fn never_panics_on_arbitrary_input(data in proptest::collection::vec(any::<u8>(), 0..1024)) {
+            let _ = parse_response(&data);
+        }
+    }
+}
