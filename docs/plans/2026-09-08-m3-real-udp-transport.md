@@ -4,7 +4,7 @@
 
 **Goal:** Replace the placeholder client factory with a real UDP socket, so `udapcfg discover` finds actual Squeezebox hardware — plus interface enumeration, `--bind-interface`, `--all-interfaces`, and the `interfaces` subcommand.
 
-**Architecture:** `socket2` builds and configures the socket, then hands it to `tokio::net::UdpSocket`. `netdev` supplies interface enumeration with real `IFF_*` flags. `MultiTransport` composes N `UdpTransport`s with one `tokio::spawn` per child merging into an `mpsc` channel. The `Transport` trait from M2 is the seam — `Client` is unchanged.
+**Architecture:** `socket2` builds and configures the socket, then hands it to `tokio::net::UdpSocket`. `netdev` supplies interface enumeration with real `IFF_*` flags. `MultiTransport` composes N `UdpTransport`s, merging their replies (Task 4 offers two designs for how). The `Transport` trait from M2 is the seam — `Client` is unchanged.
 
 **Tech Stack:** Rust 1.98.1, tokio (current_thread), socket2 0.6 (`all`), netdev 0.46 (no default features), clap 4.
 
@@ -943,7 +943,7 @@ Port of `udap/multi_transport.go`.
 
 **Behaviour, from the Go:**
 - `send` fans out to every child. Succeeds if **any** child succeeded; returns an aggregated error only if **all** failed. Per-child failures are logged at warn.
-- `recv` merges children through one spawned task each into an `mpsc` channel — the same structure that fixed M2's lost-wakeup race.
+- `recv` returns the next packet from **any** child, whichever arrives first, and no reply is lost or duplicated. How the merge is implemented is your choice — see the two options in Step 3. (go-udap uses one pump goroutine per child feeding a shared channel, but that is Go's shape, not a requirement on ours.)
 - Children that fail to bind are **skipped with a warning**; if none bind, error.
 - An empty interface list errors with `no usable interfaces found`.
 
