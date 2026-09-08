@@ -101,6 +101,10 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/yo61/udapcfg-rs"
+# Nothing here is published to crates.io (see the spec's non-goals). This also
+# lets cargo-deny's allow-wildcard-paths apply to our intra-workspace deps —
+# it only honours that setting for crates marked unpublishable.
+publish = false
 
 [workspace.dependencies]
 tokio = { version = "1.53", features = ["rt", "net", "time", "sync", "macros"] }
@@ -159,6 +163,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
 description = "Squeezebox UDAP protocol client"
 
 [dependencies]
@@ -187,6 +192,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
 description = "In-process mock Squeezebox Receiver for testing udap"
 
 [dependencies]
@@ -210,6 +216,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
 description = "Command-line tool for configuring Squeezebox devices over UDAP"
 
 [[bin]]
@@ -269,6 +276,9 @@ allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Intra-workspace path deps carry no version and are not wildcards in the
+# sense the lint means. Revisit if anything is ever published to crates.io.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
@@ -303,7 +313,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features
       - name: Test
-        run: cargo nextest run --all-features
+        run: cargo nextest run --all-features --no-tests=pass
       - name: Supply chain
         run: cargo deny check
 ```
@@ -321,7 +331,9 @@ mise exec -- cargo fmt --all --check
 mise exec -- cargo nextest run --workspace
 ```
 
-Expected: all four succeed. `nextest` reports 0 tests, which is correct at this point.
+Expected: all four succeed. `nextest` reports 0 tests and **exits non-zero** — it treats
+an empty run as an error. That is why CI passes `--no-tests=pass`; a crate that fails
+to compile still fails earlier, in cargo. From Task 2 the flag is a no-op.
 
 - [ ] **Step 8: Commit**
 

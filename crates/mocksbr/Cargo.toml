@@ -1,0 +1,19 @@
+[package]
+name = "mocksbr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "In-process mock Squeezebox Receiver for testing udap"
+
+[dependencies]
+udap = { path = "../udap" }
+async-trait.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[lints]
+workspace = true
