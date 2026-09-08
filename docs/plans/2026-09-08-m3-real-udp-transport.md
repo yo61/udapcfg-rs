@@ -661,12 +661,19 @@ And in `crates/udap/tests/discovery.rs`, a test proving retries reach the wire:
 
 ```rust
 /// A transport that counts sends and never replies.
-struct CountingTransport(std::sync::atomic::AtomicUsize);
+///
+/// The counter is an `Arc<AtomicUsize>` the test also holds, so the
+/// transport itself can be a plain `Box<dyn Transport>` — which is what
+/// `Client::new` takes. Boxing an `Arc<dyn Transport>` would give
+/// `Box<Arc<dyn Transport>>`, an unrelated type (E0308).
+struct CountingTransport {
+    sends: Arc<AtomicUsize>,
+}
 
 #[async_trait::async_trait]
 impl udap::transport::Transport for CountingTransport {
     async fn send(&self, _packet: &[u8]) -> Result<(), udap::transport::TransportError> {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.sends.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     async fn recv(
@@ -683,22 +690,27 @@ impl udap::transport::Transport for CountingTransport {
 
 #[tokio::test]
 async fn retries_n_produces_n_plus_one_sends() {
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    let t = Arc::new(CountingTransport(Default::default()));
-    let mut client = Client::new(Box::new(Arc::clone(&t) as Arc<dyn udap::transport::Transport>));
+    let sends = Arc::new(AtomicUsize::new(0));
+    let mut client = Client::new(Box::new(CountingTransport {
+        sends: Arc::clone(&sends),
+    }));
     client.set_retries(2);
 
     let cancel = CancellationToken::new();
     cancel.cancel();
     let _ = client.discover(&cancel).await;
 
-    assert_eq!(t.0.load(Ordering::SeqCst), 3, "2 retries means 3 total sends");
+    assert_eq!(sends.load(Ordering::SeqCst), 3, "2 retries means 3 total sends");
 }
 ```
 
-> `Client::new` takes `Box<dyn Transport>`. If wrapping an `Arc` for the counter proves awkward, change the test to keep a `Arc<AtomicUsize>` inside the transport and hand `Client` a plain `Box` holding a clone of that counter — the assertion is what matters, not the ownership shape. Report which you used.
+Note `Client::new` takes `Box<dyn Transport>`, so the transport is boxed
+directly and the shared state is the `Arc<AtomicUsize>` counter — not the
+transport. `add_retries` is applied via `set_retries` after construction,
+matching how the CLI factory will do it in Step 5.
 
 - [ ] **Step 2: Run to verify failure**
 
