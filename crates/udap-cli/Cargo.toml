@@ -8,6 +8,10 @@ repository.workspace = true
 publish.workspace = true
 description = "Command-line tool for configuring Squeezebox devices over UDAP"
 
+[lib]
+name = "udap_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "udapcfg"
 path = "src/main.rs"
