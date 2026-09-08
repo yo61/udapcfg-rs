@@ -47,7 +47,7 @@ there.
 | Binary name | **`udapcfg`**, not `go-udap` — the two must be installable side by side. See the exception below |
 | Subcommands | `discover`, `info`, `read`, `get`, `set`, `reboot`, `getip`, `interfaces` |
 | Global flags | `--timeout`, `--retries`, `--verbose/-v`, `--version`, `--help/-h`, `--bind-interface`, `--all-interfaces`; accepted before *or* after the subcommand |
-| Exit codes | 0 success, 1 usage error, 2 operation failure |
+| Exit codes | 0 success, 2 for everything that fails. **1 is not a general usage-error code** — measured against go-udap, it is returned only for an unusable `--bind-interface` name (`cli/cli.go:124` wraps that one in `ExitError{Code: 1}`). Cobra does not wrap its own parse errors, so unknown flags, bad durations, unknown subcommands and mutually-exclusive flags all exit 2. `--help`/`--version` exit 0 |
 | Streams | Results on stdout; logs, warnings, progress bar on stderr |
 | Output text | Byte-identical, including the `-` placeholder for absent network values and the fixed-column `interfaces` table |
 | Retries | `--retries N` = N *re-transmissions* beyond the initial send, no inter-send delay |
