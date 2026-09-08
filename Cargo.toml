@@ -34,6 +34,10 @@ clap = { version = "4.6", features = ["derive", "wrap_help"] }
 # hours, fractions, compound and negative forms before adopting.
 go-duration = "0.2.0"
 socket2 = { version = "0.6", features = ["all"] }
+# Already in the tree transitively via netdev; taken directly for
+# Ipv4Net::broadcast(), whose `addr | hostmask` is the same arithmetic
+# directed_broadcast hand-rolled, with the /0 edge case handled inside.
+ipnet = "2.12"
 netdev = { version = "0.46", default-features = false }
 indicatif = "0.18"
 insta = "1.48"

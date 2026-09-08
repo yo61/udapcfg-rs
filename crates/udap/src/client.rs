@@ -311,7 +311,7 @@ fn parse_discovery_response(payload: &[u8], src: &str, packet: &Packet) -> Devic
             tlv_code::DEVICE_ID => device_id = text,
             tlv_code::DEVICE_STATUS => device.state = text,
             tlv_code::HARDWARE_REV => device.hardware_rev = text,
-            tlv_code::UUID => device.uuid = hex_encode(entry.value),
+            tlv_code::UUID => device.uuid = crate::hex::encode(entry.value),
             tag => debug!(
                 tag = format!("0x{tag:02x}"),
                 len = entry.value.len(),
@@ -325,15 +325,6 @@ fn parse_discovery_response(payload: &[u8], src: &str, packet: &Packet) -> Devic
         "Squeezebox Device".clone_into(&mut device.name);
     }
     device
-}
-
-fn hex_encode(value: &[u8]) -> String {
-    let mut s = String::with_capacity(value.len() * 2);
-    for byte in value {
-        use std::fmt::Write;
-        let _ = write!(s, "{byte:02x}");
-    }
-    s
 }
 
 #[cfg(test)]

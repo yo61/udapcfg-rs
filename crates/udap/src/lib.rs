@@ -6,6 +6,7 @@ pub mod client;
 pub mod device;
 pub mod error;
 pub mod getdata;
+mod hex;
 pub mod interfaces;
 pub mod mac;
 pub mod parameters;

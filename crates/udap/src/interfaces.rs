@@ -43,17 +43,19 @@ pub const NOT_USABLE_REASON: &str =
     "is not usable (must be up, broadcast-capable, with an IPv4 address)";
 
 /// Returns the subnet's directed-broadcast address: `addr | !mask`.
+///
+/// Delegates to `ipnet`, whose `Ipv4Net::broadcast` is `addr | hostmask` —
+/// the same arithmetic this used to hand-roll, with the `/0` case (where
+/// shifting a `u32` by 32 is undefined) handled inside the crate. `ipnet`
+/// was already in the tree transitively via `netdev`.
+///
+/// Kept as a named function so the tests below pin the behaviour against
+/// go-udap's `computeDirectedBroadcast` rather than against `ipnet`.
 fn directed_broadcast(addr: Ipv4Addr, prefix_len: u8) -> Ipv4Addr {
-    // A /0 mask is 0, and shifting a u32 by 32 is undefined in Rust, so
-    // compute the mask via checked_shl and treat the overflow as "no bits".
-    let mask: u32 = if prefix_len == 0 {
-        0
-    } else {
-        u32::MAX
-            .checked_shl(u32::from(32 - prefix_len))
-            .unwrap_or(0)
-    };
-    Ipv4Addr::from(u32::from(addr) | !mask)
+    // prefix_len comes from netdev, which cannot report > 32 for IPv4;
+    // Ipv4Net::new rejects anything larger, and we fall back to the
+    // address itself (a /32 has no host bits) rather than panicking.
+    ipnet::Ipv4Net::new(addr, prefix_len).map_or(addr, |net| net.broadcast())
 }
 
 /// Every interface usable for UDAP broadcast discovery.
