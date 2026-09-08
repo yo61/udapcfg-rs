@@ -1,0 +1,56 @@
+[workspace]
+resolver = "3"
+members = ["crates/udap", "crates/mocksbr", "crates/udap-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+repository = "https://github.com/yo61/udapcfg-rs"
+# Nothing here is published to crates.io (see the spec's non-goals). This also
+# lets cargo-deny's allow-wildcard-paths apply to our intra-workspace deps.
+publish = false
+
+[workspace.dependencies]
+tokio = { version = "1.53", features = ["rt", "net", "time", "sync", "macros"] }
+tokio-util = "0.7"  # CancellationToken needs no features
+async-trait = "0.1"
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+clap = { version = "4.6", features = ["derive", "wrap_help"] }
+socket2 = { version = "0.6", features = ["all"] }
+netdev = { version = "0.46", default-features = false }
+indicatif = "0.18"
+insta = "1.48"
+rstest = "0.27"
+proptest = "1.11"
+serial_test = "4.0"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "deny"
+panic_in_result_fn = "deny"
+unimplemented = "deny"
+allow_attributes = "deny"
+dbg_macro = "deny"
+todo = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+await_holding_lock = "deny"
+large_futures = "deny"
+exit = "deny"
+mem_forget = "deny"
+module_name_repetitions = "allow"
+similar_names = "allow"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
