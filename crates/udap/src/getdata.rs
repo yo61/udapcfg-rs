@@ -160,13 +160,33 @@ mod tests {
         ));
     }
 
-    // A crafted count of 65535 with a tiny body must not pre-allocate a
-    // huge map. Go clamps the size hint; we must too.
+    // A crafted count of 65535 with a tiny body must not cause work
+    // proportional to the declared count.
+    //
+    // go-udap needs an explicit clamp for this — `make(map[string]string,
+    // min(int(count), (len(data)-2)/4))` at getdata_response.go:42 — because
+    // Go pre-sizes the map from the hint. `BTreeMap` takes no capacity hint,
+    // so there is no allocation to bound here and nothing to clamp; the
+    // protection is a property of the container choice. What is worth
+    // asserting is the loop bound, which is ours: parsing must stop at the
+    // first item the payload cannot cover rather than iterating `count`
+    // times. If this ever moves to `HashMap::with_capacity(count)`, the
+    // clamp has to come back and this test needs an allocation assertion.
     #[test]
-    fn oversized_count_does_not_allocate_wildly() {
+    fn oversized_count_stops_at_the_payload_bound() {
         let data = [0xff, 0xff, 0x00, 0x04, 0x00, 0x01, 0x07];
-        let err = parse_response(&data).unwrap_err();
-        assert!(matches!(err, GetDataError::TruncatedHeader { .. }));
+        // Only this many item headers fit after the 2-byte count, so the
+        // loop must give up here rather than at item 65534.
+        let max_items = (data.len() - 2) / 4;
+        let bailed_at = match parse_response(&data) {
+            Err(GetDataError::TruncatedHeader { index, .. }) => Some(index),
+            _ => None,
+        };
+        assert_eq!(
+            bailed_at,
+            Some(max_items),
+            "must stop at the first item the payload cannot cover"
+        );
     }
 }
 
