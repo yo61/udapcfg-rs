@@ -17,7 +17,7 @@ one-to-one onto a Cargo workspace.
 | --- | --- | --- |
 | `udap/` | `udap` | lib |
 | `mocksbr/` + `cmd/mocksbr/` | `mocksbr` | lib + bin |
-| `cli/` + `main.go` | `udap-cli` | bin (`go-udap`) |
+| `cli/` + `main.go` | `udap-cli` | bin (`udap-rs`) |
 | `cmd/docs/` | `xtask` | bin (dev-only) |
 
 One thing Cargo permits that Go does not: a dev-dependency cycle. `udap`'s tests
@@ -42,12 +42,12 @@ it is really testing `udap`. Expect to move some tests inward.
 | `loopback.go` | `protocol.rs` | `is_udap_request_packet` — three lines, fold it in. |
 | `logger.go` | *(deleted)* | Replaced by `tracing`. See [Logging](#logging). |
 | `transport.go` | `transport/udp.rs` | `socket2`. **Gets simpler** — see [Sockets](#sockets). |
-| `multi_transport.go` | `transport/multi.rs` | Threads + `mpsc`. The hardest concurrency piece. |
+| `multi_transport.go` | `transport/multi.rs` | One `tokio::spawn` per child + `select!`. The watcher goroutine disappears. |
 | `socket_unix.go` | `transport/udp.rs` | Absorbed — `set_broadcast` / `set_reuse_address` are plain methods. |
 | `socket_darwin.go`, `socket_linux.go` | `transport/udp.rs` | **Both absorbed into one call.** See [Sockets](#sockets). |
 | `socket_windows.go` | `transport/udp.rs` | One `#[cfg(windows)]` arm returning `Error::InterfaceBindUnsupported`. |
 | `client.go` | `client.rs` | **The ownership fight.** See [Aliasing](#aliasing-and-ownership). |
-| `config.go` | `ops/config.rs` | `get`/`set`/`reset`. `context.Context` → `Deadline`. |
+| `config.go` | `ops/config.rs` | `get`/`set`/`reset`. `context.Context` → `CancellationToken` + `timeout`. |
 | `discovery.go` | `ops/discovery.rs` | Broadcast + collect-until-deadline. |
 
 ### `udap-cli` crate
@@ -60,7 +60,7 @@ it is really testing `udap`. Expect to move some tests inward.
 | `find.go` | `cmd/find.rs` | Discover-then-match-by-MAC helper. |
 | `source.go`, `config.go` | `source.rs`, `ini.rs` | INI parse + the file/stdin/flag layering. Mechanical. |
 | `output.go` | `output.rs` | Write to `&mut dyn Write`. Good `insta` snapshot targets. |
-| `progress.go`, `stderr.go` | `progress.rs` | Thread + `Arc<Mutex<StderrSync>>`. `std::io::IsTerminal` replaces the `Stat()` TTY check — no dependency. |
+| `progress.go`, `stderr.go` | `progress.rs` | `tokio::spawn` + `interval`, writing through `Arc<Mutex<StderrSync>>`. `std::io::IsTerminal` replaces the `Stat()` TTY check — no dependency. |
 | `completion.go` | `xtask` | `clap_complete` generates from the same `Command`. |
 | `deverr.go` | `error.rs` | `ExitError{Code, Err}` → enum with `exit_code()`. |
 | `uuidfallback.go`, `set_interface_default.go` | `cmd/*.rs` | Small behavioural helpers; port with their tests. |
@@ -166,23 +166,38 @@ easier once the pure modules have taught you the idioms.
 
 ### Concurrency and cancellation
 
-`context.Context` has no std equivalent, and the CLI never actually cancels — it
-only ever deadlines. So:
+Async on tokio ([ADR-1](specs/2026-09-08-rust-port-spec.md#adr-1-async-on-tokio)),
+which makes this section close to a mechanical translation — goroutines and
+channels map onto tasks and channels far more directly than onto OS threads.
 
-```rust
-#[derive(Copy, Clone)]
-pub struct Deadline(Instant);
-```
+| Go | Rust |
+| --- | --- |
+| `ctx context.Context` param | `cancel: &CancellationToken` param |
+| `context.WithTimeout(parent, d)` | `tokio::time::timeout(d, fut).await` |
+| `<-ctx.Done()` | `cancel.cancelled().await` |
+| `go f()` | `tokio::spawn(f())` |
+| `select { case <-ch: ... case <-ctx.Done(): }` | `tokio::select! { … }` |
+| `chan T` (buffered) | `tokio::sync::mpsc::channel::<T>(n)` |
+| `sync.Once` | `tokio::sync::OnceCell` or `std::sync::OnceLock` |
+| `sync.WaitGroup` | collect `JoinHandle`s, or `TaskTracker` |
+| `sync.RWMutex` | `tokio::sync::RwLock` (only if held across `.await`) |
 
-threaded where `ctx context.Context` is today. The 200 ms polling read-deadline
-loop in `UDPTransport.Recv` (which exists purely to re-check `ctx`) collapses
-into a single `socket.set_read_timeout(remaining)`.
+`MultiTransport.pumpChild` — a goroutine per child forwarding into a merged
+channel, with a second goroutine translating `stop` into a context cancel —
+becomes one `tokio::spawn` per child with `select!` on
+`cancel.cancelled()`. The watcher goroutine disappears entirely.
 
-`MultiTransport` is the exception — it genuinely needs concurrency. Port it as
-one `std::thread` per child feeding a `std::sync::mpsc::Sender`, with
-`recv_timeout` on the merge side. `sync.Once` → `std::sync::Once` or `OnceLock`;
-`WaitGroup` → collecting `JoinHandle`s. No async runtime; see
-[ADR-1](specs/2026-09-08-rust-port-spec.md#adr-1-threads-not-async).
+The 200 ms polling read-deadline loop in `UDPTransport.Recv` exists solely to
+re-check `ctx` against a blocking socket. On an async socket it is unnecessary:
+`select!` on the recv future and the cancellation token.
+
+Use `#[tokio::main(flavor = "current_thread")]` — this workload has no CPU
+parallelism to exploit.
+
+For `devices: HashMap<Mac, Device>`, prefer `std::sync::RwLock` over
+`tokio::sync::RwLock` unless the guard is genuinely held across an `.await`.
+The Go holds `devicesMu` only for map reads and writes, never across I/O, so the
+std lock is the faithful translation and avoids making every accessor async.
 
 ### Sockets
 
@@ -207,7 +222,15 @@ sock.set_broadcast(true)?;                       // after bind
 if let Some(idx) = iface_index {
     sock.bind_device_by_index_v4(Some(idx))?;    // macOS AND Linux
 }
+sock.set_nonblocking(true)?;                     // REQUIRED before from_std
+let sock = tokio::net::UdpSocket::from_std(sock.into())?;
 ```
+
+That last pair is the tokio hand-off, and `set_nonblocking(true)` is
+load-bearing: `from_std` on a blocking socket compiles and then stalls the
+runtime on the first read. It is the direct analogue of go-udap's
+`SyscallConn().Control()`-not-`File()` hazard — same class of silent mistake,
+different mechanism. Assert it in a test.
 
 `bind_device_by_index_v4` is gated on `any(target_os = "macos", "ios", "linux",
 "android", "illumos", "solaris", …)` and dispatches internally to `IP_BOUND_IF`
@@ -274,6 +297,7 @@ completions off that same `Command`, matching cobra's behaviour today.
 | Golden CLI output compared as strings | `insta` snapshots (strictly better) |
 | `prev := newClient; newClient = fake` global seam | Pass a client factory into `run()` — dependency injection |
 | `t.Parallel()` opt-in | Parallel by default; env-touching tests need `serial_test` |
+| `func TestX(t *testing.T)` | `#[tokio::test]` for anything touching the transport |
 | `go test -race` | Ownership rules cover most of it; keep `--cfg` sanitizer runs in CI |
 
 The package-global `newClient` seam in `cli/e2e_harness_test.go` is the one test

@@ -1,0 +1,23 @@
+# Toolchain for udap-rs.
+#
+# Versions are pinned exactly (project standard: pin exact versions, never
+# ranges). Refresh deliberately with `mise outdated` / `mise upgrade`, then
+# commit the change — do not let them float.
+#
+# Deliberately NOT adding a rust-toolchain.toml: rustup would read it and
+# shadow mise's pin, giving two sources of truth for the same thing.
+
+[tools]
+rust = { version = "1.98.1", components = "rustfmt,clippy", profile = "default" }
+
+# Supply chain and test tooling. Installed from crates.io via mise's cargo
+# backend, so they are pinned the same way the toolchain is.
+"cargo:cargo-deny" = "0.20.2"       # advisories, licences, bans
+"cargo:cargo-audit" = "0.22.2"      # RustSec advisory scan
+"cargo:cargo-nextest" = "0.9.143"   # test runner
+"cargo:cargo-mutants" = "27.1.0"    # mutation testing (M1 onward)
+
+[env]
+# Fail the build on warnings everywhere, matching the project's zero-warnings
+# policy, without needing the flag on every invocation.
+RUSTFLAGS = "-D warnings"

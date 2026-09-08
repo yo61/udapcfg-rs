@@ -44,6 +44,7 @@ there.
 | Surface | Contract |
 | --- | --- |
 | Wire bytes | Identical for all six UCP methods, including field order, padding, and the sort-by-offset in `get_data`/`set_data` |
+| Binary name | **`udap-rs`**, not `go-udap` — the two must be installable side by side. See the exception below |
 | Subcommands | `discover`, `info`, `read`, `get`, `set`, `reboot`, `getip`, `interfaces` |
 | Global flags | `--timeout`, `--retries`, `--verbose/-v`, `--version`, `--help/-h`, `--bind-interface`, `--all-interfaces`; accepted before *or* after the subcommand |
 | Exit codes | 0 success, 1 usage error, 2 operation failure |
@@ -52,7 +53,21 @@ there.
 | Retries | `--retries N` = N *re-transmissions* beyond the initial send, no inter-send delay |
 | Broadcast target | Always `255.255.255.255`, never a directed subnet broadcast |
 
-That last row is load-bearing. go-udap's
+**Program-name exception.** Because the binary is `udap-rs`, "identical output"
+means *identical modulo the program name*. Affected surfaces:
+
+- `--help` and all subcommand help (usage lines, "Usage: udap-rs …")
+- usage-error messages on stderr
+- `--version`, which prints `udap-rs X.Y.Z` rather than `go-udap X.Y.Z`
+- man page filenames (`udap-rs.1`, `udap-rs-discover.1`, …) and their `.TH` header
+- completion script names and their internal function prefixes
+
+Everywhere else — device output, parameter dumps, the `interfaces` table, error
+text about devices — the program name does not appear and byte-identity holds
+without qualification. When porting go-udap's golden output, substitute the
+program name and nothing else; any *other* diff is a bug.
+
+The always-broadcast row below is load-bearing. go-udap's
 `docs/superpowers/plans/2026-05-13-getip-hwrev-uuid-iface.md` records a spike
 where binding to the interface IP and sending to a directed broadcast meant
 pre-DHCP devices never replied. **Do not re-derive this on hardware.** Copy the
@@ -60,25 +75,51 @@ behaviour.
 
 ## Architecture decisions
 
-### ADR-1: threads, not async
+### ADR-1: async on tokio
 
-`MultiTransport` is the only genuinely concurrent component. Port it as one
-`std::thread` per child transport feeding a `std::sync::mpsc` channel.
+Use `tokio` as the async runtime. `tokio::net::UdpSocket` for transport,
+`tokio::select!` for the `MultiTransport` merge, `tokio::sync::mpsc` for
+channels, `tokio::time::timeout` for deadlines.
 
-*Rejected:* tokio. It is a large dependency for a process that performs one
-operation and exits, and async Rust is a second learning curve stacked on the
-first. Threads are also the more faithful translation of goroutines-plus-channels.
+*Rationale:* learning async Rust is an explicit goal of the project, and this is
+a well-suited codebase for it — the concurrency is real but small, so the async
+surface stays comprehensible. It also happens to be the more faithful
+translation: goroutines-plus-channels map onto tasks-plus-channels far more
+directly than onto OS threads, and `MultiTransport`'s per-child pump goroutine
+becomes a spawned task almost line-for-line.
 
-*Revisit if:* a future feature needs concurrent operations against many devices.
+*Cost accepted:* tokio is a large dependency for a single-shot CLI, and startup
+carries runtime-initialisation overhead that a threaded build would not. Use
+`#[tokio::main(flavor = "current_thread")]` — this workload has no CPU
+parallelism to exploit, and the single-threaded scheduler avoids spawning a
+worker pool for a process that sends a handful of UDP packets and exits.
 
-### ADR-2: `Deadline`, not `Context`
+*Rejected:* `std::thread` + `mpsc`. Fewer dependencies and a smaller binary, but
+it teaches the thing Robin already knows from Go rather than the thing this
+project exists to learn.
 
-Replace `ctx context.Context` with `Deadline(Instant)`. The CLI is single-shot
-and never cancels early — it only ever times out. This deletes the 200 ms
-polling loop in `UDPTransport.Recv`, whose sole purpose is re-checking `ctx`.
+### ADR-2: `CancellationToken` + `timeout`, mirroring `Context`
 
-*Trade-off:* no early cancellation. Nothing uses it today; Ctrl-C terminates the
-process.
+Choosing tokio (ADR-1) makes this *more* faithful than the alternative would
+have been. `context.Context` carries both a deadline and a cancellation signal;
+`tokio_util::sync::CancellationToken` paired with `tokio::time::timeout` is a
+direct analogue of both halves, so operation signatures keep their shape:
+
+| Go | Rust |
+| --- | --- |
+| `f(ctx context.Context, ...)` | `async fn f(&self, cancel: &CancellationToken, ...)` |
+| `ctx, cancel := context.WithTimeout(parent, d)` | `timeout(d, fut).await` |
+| `<-ctx.Done()` | `cancel.cancelled().await` |
+| `errors.Is(err, context.DeadlineExceeded)` | `Err(Elapsed)` from `timeout` |
+
+This also deletes the 200 ms polling loop in `UDPTransport.Recv`, whose only
+purpose is re-checking `ctx` against a blocking socket — `select!` on a real
+async socket needs no polling.
+
+*Note:* an earlier draft of this spec proposed replacing `Context` with a plain
+`Deadline(Instant)` and dropping cancellation, on the grounds that the CLI never
+cancels early. That simplification is no longer needed, and cancellation now
+comes essentially free.
 
 ### ADR-3: ownership over aliasing
 
@@ -112,11 +153,21 @@ It changes no observable behaviour.
 ```
 udap-rs/
 ├── Cargo.toml              # [workspace]
+├── mise.toml               # pinned toolchain
 ├── crates/
 │   ├── udap/               # protocol, transport, client — no I/O beyond UDP
 │   ├── mocksbr/            # fake Squeezebox Receiver (lib + bin)
-│   └── udap-cli/           # the `go-udap` binary
+│   └── udap-cli/           # produces the `udap-rs` binary
 └── xtask/                  # man pages, completions, release helpers
+```
+
+The CLI crate is `udap-cli` but its binary is `udap-rs`, set explicitly so the
+crate name does not collide with the workspace directory:
+
+```toml
+[[bin]]
+name = "udap-rs"
+path = "src/main.rs"
 ```
 
 ## Dependencies
@@ -126,8 +177,10 @@ we should not casually exceed that.
 
 | Crate | Version | Replaces | Justification |
 | --- | --- | --- | --- |
+| `tokio` (rt, net, time, sync, macros) | 1.53 | goroutines, channels, `context` | Async runtime (ADR-1). `current_thread` flavour — no worker pool |
+| `tokio-util` (rt) | 0.7 | `context.Context` cancellation | `CancellationToken` (ADR-2) |
 | `clap` (derive, wrap_help) | 4.6 | cobra + pflag | Subcommands, help, and the derive/builder mix the generated flags need |
-| `socket2` (all) | 0.6 | `syscall.Setsockopt*`, `net.ListenConfig` | `SO_BROADCAST`, `SO_REUSEPORT`, interface binding. `all` feature gates `bind_device_by_index_v4` |
+| `socket2` (all) | 0.6 | `syscall.Setsockopt*`, `net.ListenConfig` | `SO_BROADCAST`, `SO_REUSEPORT`, interface binding. `all` feature gates `bind_device_by_index_v4`. See [socket construction](#socket-construction) |
 | `thiserror` | 2.0 | `fmt.Errorf` in `udap` | Library error enums |
 | `anyhow` | 1.0 | `fmt.Errorf` in `cli` | Application error context |
 | `tracing` | 0.1 | `udap/logger.go` | Structured logging |
@@ -140,44 +193,95 @@ we should not casually exceed that.
 Versions are current stable as of 2026-09-08 (verified against the crates.io
 API). Pin exact versions per the project standard.
 
-**Explicitly not taken:** `serde` (ADR-4), `tokio` (ADR-1), `indicatif` (the
-progress bar's logger-interleaving behaviour is bespoke; `std::io::IsTerminal`
-covers TTY detection), `deku`/`binrw` (one 27-byte struct does not justify a
-proc macro), `hex` (the Go hand-rolls nibble decoding for the same reason).
+**Explicitly not taken:** `serde` (ADR-4), `indicatif` (`cli/stderr.go`
+implements a specific bar-versus-log interleaving contract that is likely more
+fiddly to reproduce through indicatif than to port directly; `std::io::IsTerminal`
+covers TTY detection with no dependency), `deku`/`binrw` (one 27-byte struct
+does not justify a proc macro), `hex` (the Go hand-rolls nibble decoding for the
+same reason).
+
+### Socket construction
+
+`socket2` and `tokio` have to be joined explicitly — this is the one seam where
+ADR-1 costs something. `tokio::net::UdpSocket` cannot set the options we need,
+and `socket2::Socket` is blocking. Build with one, hand off to the other:
+
+```rust
+let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+sock.set_reuse_address(true)?;
+sock.set_reuse_port(true)?;                        // must precede bind
+sock.bind(&SocketAddr::from(([0, 0, 0, 0], port)).into())?;
+sock.set_broadcast(true)?;
+if let Some(idx) = iface_index {
+    sock.bind_device_by_index_v4(Some(idx))?;      // IP_BOUND_IF / SO_BINDTOIFINDEX
+}
+sock.set_nonblocking(true)?;                       // REQUIRED before from_std
+let sock = tokio::net::UdpSocket::from_std(sock.into())?;
+```
+
+`set_nonblocking(true)` is load-bearing: `from_std` on a blocking socket
+compiles and then stalls the runtime at the first read. This is the direct
+analogue of go-udap's documented `SyscallConn().Control()`-not-`File()` hazard —
+same class of mistake, different mechanism, equally silent. Assert it in a test.
 
 ## Milestones
 
-Ordered so the pure-logic modules teach the idioms before the ownership fight.
-Each milestone ends with its Go tests ported and passing.
+**Walking-skeleton shape.** M2 builds the thinnest possible end-to-end slice —
+one operation, all the way through — so there is a running binary early and every
+later milestone thickens something that already works. Each milestone ends with
+its Go tests ported and passing.
 
-**M1 — pure protocol** (`mac`, `protocol`, `tlv`, `parameters`, `getdata`,
-`netconfig`, `validation`)
-No I/O. Roughly 40% of `udap` by value. The Go test files port almost
-line-for-line. *Done when:* `cargo test -p udap` passes with the ported suite,
-and encoding a known packet produces bytes identical to a go-udap capture.
+`mocksbr` cannot come first: it imports 16 `udap` symbols (`ParsePacket`,
+`Packet`, `TLVData`, `Parameters`, every method constant) because it is the
+responder side of the same protocol. Building it before the protocol core would
+mean building the protocol core anyway, with less test coverage while doing it.
+Hence the protocol module leads, but only just.
 
-**M2 — transport** (`transport/udp`, `interfaces`, the Windows `#[cfg]` arm)
-First I/O, first platform conditionals. *Done when:* a real broadcast reaches a
-real device and a reply is received, on macOS and Linux.
+**M0 — foundations**
+`mise.toml`, Cargo workspace, the three crate skeletons, `[lints.clippy]`,
+CI running `fmt` + `clippy -D warnings` + `nextest`. *Done when:* an empty
+workspace builds clean and CI is green.
 
-**M3 — client and operations** (`client`, `ops/*`, `transport/multi`)
-The ownership work and the only concurrency. *Done when:* all six UCP operations
+**M1 — protocol core** (`mac`, `protocol`, `tlv`, `parameters`, `getdata`)
+No I/O, no async. Where the Rust idioms get learned before anything harder.
+The Go test files port almost line-for-line. *Done when:* `cargo test -p udap`
+passes, and encoding a known packet produces bytes identical to the committed
+captures in `mocksbr/testdata/captures/`.
+
+**M2 — walking skeleton: `discover` end to end**
+The thinnest vertical slice that runs. Discovery request encode; a `mocksbr`
+that answers `adv_disc` (0x0009) and nothing else; the in-process
+`MockTransport`; a `Transport` trait; a clap `discover` subcommand printing
+MACs. Introduces async, since the transport trait is async from the start.
+*Done when:* `udap-rs discover` against an in-process mock prints the same MAC
+list `go-udap discover` does. **This is the first milestone with a working
+binary.**
+
+**M3 — real transport** (`transport/udp`, `interfaces`, Windows `#[cfg]` arm)
+Swap the mock for a real socket: `socket2` construction, the tokio hand-off,
+`--bind-interface`, `--all-interfaces` via `MultiTransport`. *Done when:*
+`udap-rs discover` finds a real device on real hardware, on macOS and Linux.
+
+**M4 — remaining operations** (`client`, `ops/*`, `validation`, `netconfig`)
+`get_data`, `set_data`, `reset`, `get_ip`, `get_uuid`, plus the read-modify-write
+in `set`. Contains the ADR-3 ownership work. *Done when:* all six UCP operations
 round-trip against `mocksbr`.
 
-**M4 — mocksbr**
-Needed in full before the CLI e2e suite can be ported. Both the library and the
-standalone binary.
+**M5 — mocksbr complete**
+All handlers, the fault-injection knobs, the standalone binary. Unblocks the
+full e2e suite. *Done when:* go-udap's `mocksbr` integration tests pass in Rust.
 
-**M5 — CLI**
-clap, output formatting, progress bar, INI source layering, man pages,
-completions. *Done when:* every go-udap e2e scenario passes with identical
-stdout/stderr/exit code.
+**M6 — CLI complete**
+Remaining subcommands, output formatting, the progress bar and stderr sync, INI
+source layering, man pages, completions. *Done when:* every go-udap e2e scenario
+passes with identical stdout/stderr/exit code, modulo program name.
 
-**M6 — release plumbing**
-CI, cross-compilation, packaging. See [Open questions](#open-questions).
+**M7 — release plumbing**
+Cross-compilation, packaging, SBOMs. See [Open questions](#open-questions).
 
-M1 alone is a defensible stopping point: `udap` is a standalone library and the
-learning-per-hour is highest there.
+**Stopping points.** M2 is the first — a running binary that does one real
+thing. M4 is the second and more meaningful: at that point `udap` is a complete,
+standalone Rust UDAP library, whatever happens to the CLI.
 
 ## Testing strategy
 
@@ -201,17 +305,30 @@ than inheriting it, and anything touching env vars uses `serial_test`.
 
 ## Toolchain and CI
 
-**Prerequisite: no Rust toolchain is currently installed on this machine.**
-`rustc`, `cargo`, and `rustup` are all absent. Install via `rustup` before M1.
-`cargo-deny`, `cargo-audit`, and `cargo-mutants` are also not installed.
+The toolchain is managed by [mise](https://mise.jdx.dev) and pinned in
+`mise.toml`. Versions are exact, never ranges — refresh deliberately with
+`mise outdated` / `mise upgrade` and commit the result.
 
-Per the project standard:
+| Tool | Pinned | Purpose |
+| --- | --- | --- |
+| `rust` | 1.98.1 | Toolchain, with `rustfmt` + `clippy` components |
+| `cargo-deny` | 0.20.2 | Advisories, licences, bans |
+| `cargo-audit` | 0.22.2 | RustSec advisory scan |
+| `cargo-nextest` | 0.9.143 | Test runner |
+| `cargo-mutants` | 27.1.0 | Mutation testing, from M1 |
+
+No `rust-toolchain.toml`: rustup would read it and shadow mise's pin, giving two
+sources of truth for the same thing. `mise.toml` also sets
+`RUSTFLAGS = "-D warnings"` so the zero-warnings policy holds without repeating
+the flag at every call site.
+
+Gate, per the project standard:
 
 ```
-cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --check
-cargo test
-cargo deny check          # advisories, licenses, bans
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run
+cargo deny check          # advisories, licences, bans
 ```
 
 `Cargo.toml` carries the standard `[lints.clippy]` block (pedantic, panic

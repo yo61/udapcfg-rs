@@ -24,14 +24,21 @@ a large test suite.
 ```
 crates/udap/       protocol, transport, client
 crates/mocksbr/    fake Squeezebox Receiver for testing
-crates/udap-cli/   the `go-udap` binary
+crates/udap-cli/   produces the `udap-rs` binary
 xtask/             man pages, completions, release helpers
 ```
 
 ## Prerequisites
 
-No Rust toolchain is installed yet. Install via [rustup](https://rustup.rs)
-before starting M1.
+The toolchain is pinned in `mise.toml`. With [mise](https://mise.jdx.dev)
+installed:
+
+```sh
+mise install
+```
+
+That provides Rust 1.98.1 (with rustfmt and clippy) plus `cargo-deny`,
+`cargo-audit`, `cargo-nextest`, and `cargo-mutants`, all pinned exactly.
 
 ## Licence
 
