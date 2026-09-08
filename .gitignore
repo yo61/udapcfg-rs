@@ -1,0 +1,24 @@
+# Cargo build output
+/target/
+**/*.rs.bk
+
+# Backtrace / profiling artifacts
+*.profraw
+perf.data*
+
+# Coverage
+/coverage/
+lcov.info
+
+# Release artifacts
+/dist/
+
+# Generated man pages and shell completions (built by build.rs / xtask)
+/man/
+/completions/
+
+# env file
+.env
+
+# Editor / OS
+.DS_Store
