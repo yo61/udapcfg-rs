@@ -39,9 +39,6 @@ socket2 = { version = "0.6", features = ["all"] }
 # directed_broadcast hand-rolled, with the /0 edge case handled inside.
 ipnet = "2.12"
 netdev = { version = "0.46", default-features = false }
-indicatif = "0.18"
-insta = "1.48"
-rstest = "0.27"
 proptest = "1.11"
 serial_test = "4.0"
 

@@ -183,7 +183,7 @@ we should not casually exceed that.
 | `tokio-util` | 0.7 | `context.Context` cancellation | `CancellationToken` (ADR-2). No features needed — `tokio_util::sync` is not feature-gated |
 | `async-trait` | 0.1 | Go interface methods | `Transport` needs `dyn` dispatch, and AFIT traits are still not `dyn`-compatible in Rust 1.98. Drop it if that lands |
 | `clap` (derive, wrap_help) | 4.6 | cobra + pflag | Subcommands, help, and the derive/builder mix the generated flags need |
-| `indicatif` | 0.18 | `cli/progress.go`, `cli/stderr.go` | Progress bar. Replaces the ticker, the erase-line dance, and the TTY check — see [Progress bar](#progress-bar) |
+| `indicatif` *(M6, not yet declared)* | 0.18 | `cli/progress.go`, `cli/stderr.go` | Progress bar. Replaces the ticker, the erase-line dance, and the TTY check — see [Progress bar](#progress-bar) |
 | `netdev` (no default features) | 0.46 | `net.Interfaces()` | Interface enumeration with real `IFF_*` flags — see [OQ-1](#open-questions) |
 | `socket2` (all) | 0.6 | `syscall.Setsockopt*`, `net.ListenConfig` | `SO_BROADCAST`, `SO_REUSEPORT`, interface binding. `all` feature gates `bind_device_by_index_v4`. See [socket construction](#socket-construction) |
 | `thiserror` | 2.0 | `fmt.Errorf` in `udap` | Library error enums |
@@ -192,7 +192,7 @@ we should not casually exceed that.
 | `tracing-subscriber` | 0.3 | — | `fmt` layer with a custom `MakeWriter` for stderr sync |
 | `clap_mangen` | 0.3 | `cmd/docs` | Man pages from the clap tree (build/xtask only) |
 | `clap_complete` | 4.6 | `cli/completion.go` | Shell completions (build/xtask only) |
-| `insta` | 1.48 | golden string comparisons | dev-only |
+| `insta` *(not adopted — see testing strategy)* | 1.48 | golden string comparisons | dev-only |
 | `serial_test` | 4.0 | Go's per-process test isolation | dev-only; Rust runs tests as threads in one process |
 
 Versions are current stable as of 2026-09-08 (verified against the crates.io
@@ -346,7 +346,20 @@ behaviour that would otherwise have to be rediscovered.
 - **Wire fidelity:** golden-byte tests against go-udap's committed captures in
   `mocksbr/testdata/captures/`. Copy those fixtures in verbatim.
 - **e2e:** `mocksbr` in-process, driving `run()` with captured stdout/stderr, via
-  `insta` snapshots.
+  inline `assert_eq!` on captured strings.
+
+  **Amended 2026-09-09.** This originally specified `insta` snapshots. The e2e
+  tests use inline assertions instead, and `insta` was removed rather than left
+  declared-and-unused. Revisit at M6, when `--info`, `read`, `get` and the
+  `interfaces` table make expected output multi-line and awkward as string
+  literals — that is the case snapshots handle better, and the point to adopt
+  them if ever.
+
+  `rstest` was likewise removed; the spec had named it only as an option for
+  table-driven cases, and nothing uses it. `indicatif` is genuinely wanted for
+  M6's progress bar but is not declared until the milestone that needs it —
+  an undeclared dependency costs nothing, a declared unused one costs every
+  build.
 - **Property:** `proptest` for the TLV codec and `parseGetDataResponse` — both
   are parsers over adversarial input and both have hand-rolled bounds checks
   worth fuzzing. (Adds a dev-dependency; justified by the project standard's

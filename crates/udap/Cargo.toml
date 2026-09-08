@@ -22,7 +22,6 @@ tracing.workspace = true
 [dev-dependencies]
 mocksbr = { path = "../mocksbr" }
 proptest.workspace = true
-rstest.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
 
 [lints]
