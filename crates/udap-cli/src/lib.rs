@@ -85,7 +85,7 @@ pub async fn run(
 
     match cli.command {
         Command::Discover => cmd::discover::run(make_client, cli.timeout, stdout, stderr).await,
-        Command::Interfaces => cmd::interfaces::run(stdout, stderr),
+        Command::Interfaces => cmd::interfaces::run(stdout, stderr, udap::interfaces::enumerate),
     }
 }
 

@@ -63,12 +63,15 @@ pub enum Command {
     )]
     Discover,
 
-    /// List usable network interfaces
+    /// List network interfaces usable for discovery
     #[command(
-        long_about = "List local network interfaces that can be used for UDAP discovery.\n\n\
-                            An interface is usable if it is up, has broadcast capability,\n\
-                            and has an IPv4 address. This list helps when choosing a\n\
-                            specific interface for `--bind-interface`."
+        long_about = "Print a table of local network interfaces that satisfy the filter\n\
+                            udapcfg applies to discovery: up, broadcast-capable, has an IPv4\n\
+                            address, and not a loopback.\n\n\
+                            Useful for picking a value for the global --bind-interface flag on\n\
+                            multi-homed hosts. The Broadcast column is informational only — UDAP\n\
+                            discovery always targets the limited broadcast 255.255.255.255 so\n\
+                            unconfigured devices can hear it."
     )]
     Interfaces,
 }
