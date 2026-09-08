@@ -6,12 +6,17 @@
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+pub mod udp;
+pub use udp::UdpTransport;
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
     #[error("operation cancelled")]
     Cancelled,
     #[error("transport I/O: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{flag} is not supported on this platform")]
+    InterfaceBindUnsupported { flag: &'static str },
 }
 
 /// Send and receive raw UDAP packets.
