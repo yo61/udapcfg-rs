@@ -4,9 +4,10 @@
 
 pub mod error;
 pub mod mac;
+pub mod parameters;
 pub mod protocol;
 pub mod tlv;
 
-pub use error::ProtocolError;
+pub use error::{EncodeError, ProtocolError};
 pub use mac::{Mac, MacParseError};
 pub use protocol::{HEADER_SIZE, PORT, Packet};
