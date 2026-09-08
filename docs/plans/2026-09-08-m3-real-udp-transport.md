@@ -1325,7 +1325,7 @@ Must find the device exactly once, not once per interface. If duplicates appear,
 **On Linux, as an unprivileged user:**
 
 ```bash
-cargo run -q -p udap-cli -- --bind-interface <name> discover; echo "exit=$?"
+mise exec -- cargo run -q -p udap-cli -- --bind-interface <name> discover; echo "exit=$?"
 ```
 
 go-udap's error text claims `SO_BINDTODEVICE` "may require CAP_NET_RAW". `SO_BINDTOIFINDEX` is a different option and may not. Record which it is. If it needs privileges, the error message must say so — that is part of the fidelity contract. If it does not, note that the Rust port is *less* restrictive than the Go here and add it to the accepted-deltas table.
