@@ -198,6 +198,34 @@ we should not casually exceed that.
 Versions are current stable as of 2026-09-08 (verified against the crates.io
 API). Pin exact versions per the project standard.
 
+### INI parsing (M6)
+
+`set --config FILE` consumes an INI file, and the format is a **round-trip
+contract**: `read` emits sorted `key=value` lines and `set --config` consumes
+exactly that output. go-udap documents this, and ships example `.conf` files
+users have on disk. The format therefore cannot change — not to TOML, not to
+YAML — because `read`'s output is itself a fidelity-contract surface, and a
+`backup.conf` produced by go-udap must work against udapcfg.
+
+**Use `rust-ini`** for the tokenizing. It is the maintained, widely-used INI
+crate, and this is genuinely INI: `key=value`, `#` and `;` comments, blank
+lines ignored, whitespace trimmed, no sections.
+
+The validation layer stays ours, because it needs the parameter table and
+cannot come from a config crate:
+
+- **line numbers in errors** — `line 4: unknown parameter "foo"`
+- **alias collision detection** — `slimserver_address` and
+  `squeezecenter_address` are different keys that resolve to the same NVRAM
+  offset, so go-udap rejects a file setting both rather than letting
+  last-write-win corrupt a byte range. No INI parser can see this; it needs
+  `ParameterByName`.
+- **per-key validation** against `udap::validation`
+
+If `rust-ini` cannot surface line numbers, keep them by locating the offending
+key in the source text after parsing, rather than abandoning the crate — the
+error text is a fidelity surface too.
+
 **Explicitly not taken:** `serde` (ADR-4), `deku`/`binrw` (one 27-byte struct
 does not justify a proc macro), `hex` (the Go hand-rolls nibble decoding for the
 same reason), `tracing-indicatif` (the one integration point — clearing the bar
