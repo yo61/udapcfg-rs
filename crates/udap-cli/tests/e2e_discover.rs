@@ -1,11 +1,11 @@
+use go_duration::GoDuration;
 use std::sync::Arc;
-use std::time::Duration;
 use udap_cli::{Cli, Command, run};
 
 /// Runs the CLI against an in-process mock, returning (stdout, stderr, exit code)
 /// as raw bytes. Callers (which are `#[tokio::test]`-attributed, so
 /// `allow-unwrap-in-tests` applies) decode to `String` themselves.
-async fn run_cli(device_count: usize, timeout: Duration) -> (Vec<u8>, Vec<u8>, i32) {
+async fn run_cli(device_count: usize, timeout_ms: i64) -> (Vec<u8>, Vec<u8>, i32) {
     let network = Arc::new(mocksbr::Network::with_auto_devices(device_count));
     let factory = Box::new(move || {
         Ok(udap::Client::new(Box::new(mocksbr::MockTransport::new(
@@ -13,7 +13,7 @@ async fn run_cli(device_count: usize, timeout: Duration) -> (Vec<u8>, Vec<u8>, i
         ))))
     });
     let cli = Cli {
-        timeout,
+        timeout: GoDuration::from(timeout_ms * 1_000_000),
         verbose: false,
         retries: 0,
         command: Command::Discover,
@@ -33,7 +33,7 @@ async fn run_cli(device_count: usize, timeout: Duration) -> (Vec<u8>, Vec<u8>, i
 
 #[tokio::test]
 async fn prints_one_mac_per_line_sorted() {
-    let (stdout, _, code) = run_cli(3, Duration::from_millis(50)).await;
+    let (stdout, _, code) = run_cli(3, 50).await;
     let stdout = String::from_utf8(stdout).unwrap();
     assert_eq!(code, 0);
     assert_eq!(
@@ -44,7 +44,7 @@ async fn prints_one_mac_per_line_sorted() {
 
 #[tokio::test]
 async fn reports_no_devices_on_stderr_and_exits_zero() {
-    let (stdout, stderr, code) = run_cli(0, Duration::from_millis(50)).await;
+    let (stdout, stderr, code) = run_cli(0, 50).await;
     let stdout = String::from_utf8(stdout).unwrap();
     let stderr = String::from_utf8(stderr).unwrap();
     assert_eq!(code, 0, "finding nothing is not an error");
@@ -54,7 +54,7 @@ async fn reports_no_devices_on_stderr_and_exits_zero() {
 
 #[tokio::test]
 async fn results_go_to_stdout_not_stderr() {
-    let (stdout, stderr, _) = run_cli(1, Duration::from_millis(50)).await;
+    let (stdout, stderr, _) = run_cli(1, 50).await;
     let stdout = String::from_utf8(stdout).unwrap();
     let stderr = String::from_utf8(stderr).unwrap();
     assert!(stdout.contains("00:04:20:00:00:01"));

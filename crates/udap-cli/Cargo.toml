@@ -20,6 +20,7 @@ path = "src/main.rs"
 udap = { path = "../udap" }
 anyhow.workspace = true
 clap.workspace = true
+go-duration.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
 tokio-util.workspace = true
 tracing.workspace = true
