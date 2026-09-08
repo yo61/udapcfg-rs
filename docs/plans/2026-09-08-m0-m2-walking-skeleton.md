@@ -17,7 +17,7 @@
 - **Wire bytes are pinned.** All multi-byte protocol fields are **big-endian**. The UDAP header is exactly **27 bytes**. Any change to encoding is a spec amendment, not an implementation choice.
 - **Binary is `udapcfg`**, not `go-udap` and not `udapcfg-rs`. Output must match go-udap byte-for-byte *except* where the program name appears (help, usage errors, `--version`).
 - **Toolchain is pinned in `mise.toml`.** Run everything through `mise exec --` or with mise activated. Rust 1.98.1.
-- **Zero warnings.** `mise.toml` sets `RUSTFLAGS = "-D warnings"`. `cargo clippy --all-targets --all-features` must be clean. Any `#[allow(...)]` needs a justification comment.
+- **Zero warnings.** `mise.toml` sets `RUSTFLAGS = "-D warnings"`. `cargo clippy --all-targets --all-features` must be clean. `clippy::allow_attributes` is denied, so suppress a lint with `#[expect(lint, reason = "...")]`, never `#[allow]` — `expect` also fails if the lint stops firing, so suppressions cannot go stale.
 - **Pin exact dependency versions** (`=1.2.3` style is not required, but do not use `^` ranges loosely — write the two-component version and let Cargo.lock pin the rest; commit `Cargo.lock`).
 - **No `unwrap()` in non-test code.** `unwrap_used = "deny"` is on. Tests may use `unwrap`/`expect`.
 - **TDD.** Every task writes the failing test first, watches it fail, then implements.
@@ -771,7 +771,7 @@ pub fn decode(data: &[u8]) -> Vec<Tlv<'_>> {
 pub fn encode_into(tag: u8, value: &[u8], out: &mut Vec<u8>) {
     let len = value.len().min(255);
     out.push(tag);
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         reason = "len is clamped to 255 on the line above"
     )]
@@ -1589,11 +1589,11 @@ mod tests {
     /// u16 length, value bytes).
     fn payload(items: &[(u16, &[u8])]) -> Vec<u8> {
         let mut out = Vec::new();
-        #[allow(clippy::cast_possible_truncation, reason = "test data is small")]
+        #[expect(clippy::cast_possible_truncation, reason = "test data is small")]
         out.extend_from_slice(&(items.len() as u16).to_be_bytes());
         for (offset, value) in items {
             out.extend_from_slice(&offset.to_be_bytes());
-            #[allow(clippy::cast_possible_truncation, reason = "test data is small")]
+            #[expect(clippy::cast_possible_truncation, reason = "test data is small")]
             out.extend_from_slice(&(value.len() as u16).to_be_bytes());
             out.extend_from_slice(value);
         }
@@ -2108,7 +2108,7 @@ impl Network {
         assert!(n <= 255, "with_auto_devices supports at most 255 devices");
         let devices = (1..=n)
             .map(|i| {
-                #[allow(clippy::cast_possible_truncation, reason = "n is asserted <= 255")]
+                #[expect(clippy::cast_possible_truncation, reason = "n is asserted <= 255")]
                 let last = i as u8;
                 let mut cfg = DeviceConfig::default_with_mac(Mac::from_bytes([
                     0x00, 0x04, 0x20, 0x00, 0x00, last,
@@ -3042,7 +3042,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             let _ = writeln!(&mut stderr, "error: {}", e.source);
-            #[allow(
+            #[expect(
                 clippy::cast_possible_truncation,
                 reason = "exit codes are 0, 1 or 2"
             )]
@@ -3126,7 +3126,9 @@ Before calling M0–M2 done:
 - [ ] The parameter table diff against `udap/parameters.go` reports `TABLES MATCH`
 - [ ] The golden capture test parses `discovery-factory.bin`
 - [ ] `Cargo.lock` is committed
-- [ ] No `#[allow(...)]` without a `reason = "..."`
+- [ ] No bare `#[allow(...)]` anywhere — `clippy::allow_attributes` is denied,
+      so suppressions use `#[expect(..., reason = "...")]`, which additionally
+      fails if the lint stops firing and the suppression goes stale
 
 ## What this plan deliberately leaves out
 
