@@ -24,6 +24,8 @@ pub enum ClientError {
     NoSuchInterface { name: String },
     #[error("no usable interfaces found")]
     NoUsableInterfaces,
+    #[error("failed to bind on any usable interface")]
+    NoInterfaceBound,
     #[error("bind: {0}")]
     Bind(#[from] crate::transport::TransportError),
 }
@@ -228,8 +230,9 @@ impl Client {
     /// Interfaces that fail to bind are skipped with a warning.
     ///
     /// # Errors
-    /// [`ClientError::NoUsableInterfaces`] if enumeration finds none or
-    /// none bind successfully.
+    /// [`ClientError::NoUsableInterfaces`] if enumeration finds none, or
+    /// [`ClientError::NoInterfaceBound`] if some exist but none bind —
+    /// matching go-udap's two distinct messages (`client.go:437,451`).
     pub fn for_all_interfaces(port: u16) -> Result<Self, ClientError> {
         let ifaces = crate::interfaces::enumerate()?;
         if ifaces.is_empty() {
@@ -245,7 +248,7 @@ impl Client {
             }
         }
         if children.is_empty() {
-            return Err(ClientError::NoUsableInterfaces);
+            return Err(ClientError::NoInterfaceBound);
         }
         Ok(Self::new(Box::new(crate::transport::MultiTransport::new(
             children,

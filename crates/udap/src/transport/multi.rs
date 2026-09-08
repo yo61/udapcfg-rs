@@ -25,10 +25,26 @@
 //! state whose lifecycle has to be gotten right. `select_all` needs none
 //! of it: an empty `Vec<Box<dyn Transport>>` behind a shared reference is
 //! enough.
+//!
+//! A child whose `recv` returns a real error (a downed VPN interface
+//! mid-discovery, say) is retired rather than allowed to end the whole
+//! fan-out: `multi_transport.go`'s `pumpChild` logs it at warn and lets
+//! that one pump exit, leaving every other child's pump feeding the
+//! merged channel. `recv` here matches that by tracking which children
+//! have errored and excluding them from the next `select_all`, looping
+//! rather than returning, so one bad interface cannot take discovery
+//! down with it. `TransportError::Cancelled` is not this kind of
+//! failure — every child shares the caller's `cancel` token, so a child
+//! reporting `Cancelled` means the whole operation was cancelled, and
+//! that propagates immediately without retiring anything. Once every
+//! child has retired, `recv` waits on `cancel` rather than returning an
+//! error, matching `Recv`'s merged channel simply never yielding again
+//! and leaving the caller's own context deadline to end the wait.
 
 use crate::transport::{Transport, TransportError};
 use async_trait::async_trait;
 use futures_util::future::select_all;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -39,20 +55,28 @@ use tracing::warn;
 /// `Transport` regardless of how many sockets back it.
 pub struct MultiTransport {
     children: Vec<Box<dyn Transport>>,
+    /// One flag per entry in `children`, set once that child's `recv`
+    /// has reported a real (non-cancellation) error. Retirement only
+    /// affects `recv` — `send` still tries every child every time,
+    /// matching `multi_transport.go`, where retirement is a `pumpChild`
+    /// concept `Send` never consults.
+    retired: Vec<AtomicBool>,
 }
 
 impl MultiTransport {
     /// Composes `children` into one fan-out transport.
     ///
-    /// An empty `children` is accepted (so this constructor never fails),
-    /// but `send` then has nothing to fan out to and `recv` returns an
-    /// error immediately rather than hanging forever. Callers that build
-    /// children from interface enumeration — [`Client::for_all_interfaces`](
-    /// crate::Client::for_all_interfaces) — reject an empty list themselves
-    /// so the error they surface can say "no usable interfaces".
+    /// An empty `children` is accepted (so this constructor never
+    /// fails): `send` then has nothing to fan out to, and `recv` waits
+    /// on its `cancel` token exactly as it would once every child had
+    /// retired. Callers that build children from interface enumeration —
+    /// [`Client::for_all_interfaces`](crate::Client::for_all_interfaces)
+    /// — reject an empty list themselves so the error they surface can
+    /// say "no usable interfaces".
     #[must_use]
     pub fn new(children: Vec<Box<dyn Transport>>) -> Self {
-        MultiTransport { children }
+        let retired = children.iter().map(|_| AtomicBool::new(false)).collect();
+        MultiTransport { children, retired }
     }
 }
 
@@ -81,18 +105,36 @@ impl Transport for MultiTransport {
         Ok(())
     }
 
-    /// Returns the next packet from whichever child produces one first,
-    /// or the cancellation error if `cancel` fires first — see the
-    /// module docs for why this cannot lose or duplicate a reply.
+    /// Returns the next packet from whichever live child produces one
+    /// first, or the cancellation error if `cancel` fires first — see
+    /// the module docs for why this cannot lose or duplicate a reply,
+    /// and for how a child that errors is retired rather than ending
+    /// the fan-out.
     async fn recv(&self, cancel: &CancellationToken) -> Result<(Vec<u8>, String), TransportError> {
-        if self.children.is_empty() {
-            return Err(TransportError::Io(std::io::Error::other(
-                "MultiTransport has no children",
-            )));
+        loop {
+            let live: Vec<usize> = (0..self.children.len())
+                .filter(|&i| !self.retired[i].load(Ordering::SeqCst))
+                .collect();
+            if live.is_empty() {
+                cancel.cancelled().await;
+                return Err(TransportError::Cancelled);
+            }
+            let futures = live.iter().map(|&i| self.children[i].recv(cancel));
+            let (result, winner, _still_pending) = select_all(futures).await;
+            match result {
+                Ok(packet) => return Ok(packet),
+                Err(TransportError::Cancelled) => return Err(TransportError::Cancelled),
+                Err(e) => {
+                    let child_index = live[winner];
+                    warn!(
+                        child = child_index,
+                        error = %e,
+                        "MultiTransport: child recv failed, retiring"
+                    );
+                    self.retired[child_index].store(true, Ordering::SeqCst);
+                }
+            }
         }
-        let (result, _index, _still_pending) =
-            select_all(self.children.iter().map(|child| child.recv(cancel))).await;
-        result
     }
 
     /// Closes every child. Returns the first error, if any, matching
@@ -118,11 +160,13 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     struct Chatty {
         sends: Arc<AtomicUsize>,
         reply: Vec<u8>,
         fail_send: bool,
+        fail_recv: bool,
     }
 
     #[async_trait]
@@ -138,6 +182,9 @@ mod tests {
             &self,
             cancel: &CancellationToken,
         ) -> Result<(Vec<u8>, String), TransportError> {
+            if self.fail_recv {
+                return Err(TransportError::Io(std::io::Error::other("recv boom")));
+            }
             if self.reply.is_empty() {
                 cancel.cancelled().await;
                 return Err(TransportError::Cancelled);
@@ -154,6 +201,21 @@ mod tests {
             sends: Arc::clone(sends),
             reply: reply.to_vec(),
             fail_send,
+            fail_recv: false,
+        })
+    }
+
+    /// A child whose `recv` always returns a plain I/O error — the path
+    /// `Chatty`'s original two recv behaviours (an immediate reply, or
+    /// blocking until cancelled) cannot reach, and the one this round's
+    /// fix is about: a real per-child failure must retire that child,
+    /// not end the whole fan-out.
+    fn erroring_child(sends: &Arc<AtomicUsize>) -> Box<dyn Transport> {
+        Box::new(Chatty {
+            sends: Arc::clone(sends),
+            reply: Vec::new(),
+            fail_send: false,
+            fail_recv: true,
         })
     }
 
@@ -200,6 +262,72 @@ mod tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
         let err = m.recv(&cancel).await.expect_err("must not block");
+        assert!(matches!(err, TransportError::Cancelled));
+    }
+
+    /// One child errors, another has a reply: the error must not abort
+    /// the fan-out. Whichever child's future `select_all` happens to
+    /// settle first, `recv`'s retry loop must retire the erroring one
+    /// and come back with the healthy reply rather than surfacing the
+    /// error to the caller.
+    #[tokio::test]
+    async fn recv_retires_an_erroring_child_and_returns_the_healthy_reply() {
+        let sends = Arc::new(AtomicUsize::new(0));
+        let m = MultiTransport::new(vec![
+            erroring_child(&sends),
+            child(&sends, b"reply-a", false),
+        ]);
+        let cancel = CancellationToken::new();
+        let (pkt, src) = m
+            .recv(&cancel)
+            .await
+            .expect("the healthy child's reply, not the other child's error");
+        assert_eq!(pkt, b"reply-a");
+        assert_eq!(src, "10.0.0.1");
+    }
+
+    /// One child errors, another blocks until cancelled: `recv` must
+    /// wait rather than returning the error immediately (proved with a
+    /// short timeout while `cancel` is still live), and cancellation
+    /// must still resolve it once fired.
+    #[tokio::test]
+    async fn recv_waits_past_an_erroring_child_for_a_blocking_one_to_be_cancelled() {
+        let sends = Arc::new(AtomicUsize::new(0));
+        let m = MultiTransport::new(vec![erroring_child(&sends), child(&sends, b"", false)]);
+        let cancel = CancellationToken::new();
+
+        let mut recv_fut = m.recv(&cancel);
+        let too_soon = tokio::time::timeout(Duration::from_millis(20), &mut recv_fut).await;
+        assert!(
+            too_soon.is_err(),
+            "recv resolved before cancellation, despite a live blocking child"
+        );
+
+        cancel.cancel();
+        let err = recv_fut
+            .await
+            .expect_err("must resolve once cancelled, not with the retired child's error");
+        assert!(matches!(err, TransportError::Cancelled));
+    }
+
+    /// Every child errors: `recv` must wait for cancellation rather than
+    /// returning the last child's error, matching `Recv`'s merged
+    /// channel simply never yielding again once every pump has exited.
+    #[tokio::test]
+    async fn recv_waits_for_cancellation_once_every_child_has_retired() {
+        let sends = Arc::new(AtomicUsize::new(0));
+        let m = MultiTransport::new(vec![erroring_child(&sends), erroring_child(&sends)]);
+        let cancel = CancellationToken::new();
+
+        let mut recv_fut = m.recv(&cancel);
+        let too_soon = tokio::time::timeout(Duration::from_millis(20), &mut recv_fut).await;
+        assert!(
+            too_soon.is_err(),
+            "recv resolved with an error instead of waiting once every child had retired"
+        );
+
+        cancel.cancel();
+        let err = recv_fut.await.expect_err("must resolve once cancelled");
         assert!(matches!(err, TransportError::Cancelled));
     }
 }
