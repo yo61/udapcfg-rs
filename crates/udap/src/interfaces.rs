@@ -28,6 +28,20 @@ pub enum InterfaceError {
     Enumerate(String),
 }
 
+/// Why an interface fails the filter [`enumerate`] applies, phrased for
+/// direct interpolation into a "not usable" message.
+///
+/// The single source of truth for that phrase. Two call sites build a
+/// full message around it with different lead-ins, matching go-udap's
+/// own two independent templates: `ClientError::NoSuchInterface`'s
+/// `Display` (library-facing, "interface %q ..." per
+/// `udap/client.go:425`) and `udap-cli`'s `--bind-interface` pre-dispatch
+/// check (CLI-facing, "--bind-interface: %q ..." per `cli/cli.go:124`).
+/// Neither can drift from the other on the substance of *why*, because
+/// both format this same constant.
+pub const NOT_USABLE_REASON: &str =
+    "is not usable (must be up, broadcast-capable, with an IPv4 address)";
+
 /// Returns the subnet's directed-broadcast address: `addr | !mask`.
 fn directed_broadcast(addr: Ipv4Addr, prefix_len: u8) -> Ipv4Addr {
     // A /0 mask is 0, and shifting a u32 by 32 is undefined in Rust, so

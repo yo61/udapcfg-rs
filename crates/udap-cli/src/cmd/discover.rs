@@ -11,15 +11,22 @@ use tokio_util::sync::CancellationToken;
 /// Finding nothing is not an error: a note goes to stderr and the exit
 /// code stays 0, matching go-udap.
 ///
+/// `resolved_interface` is `--bind-interface`'s already-enumerated match,
+/// computed once by [`crate::run`]'s pre-dispatch check; `None` when the
+/// flag was not given. Forwarded to the factory unchanged so client
+/// construction never enumerates a second time.
+///
 /// # Errors
 /// [`CliError`] with code 2 if the client cannot be built or discovery fails.
 pub async fn run(
     make_client: ClientFactory,
+    resolved_interface: Option<&udap::NetInterface>,
     timeout: GoDuration,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<(), CliError> {
-    let mut client = make_client().map_err(|e| CliError { code: 2, source: e })?;
+    let mut client =
+        make_client(resolved_interface).map_err(|e| CliError { code: 2, source: e })?;
 
     let cancel = CancellationToken::new();
     let token = cancel.clone();

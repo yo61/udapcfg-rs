@@ -17,8 +17,8 @@ pub enum TransportError {
     Cancelled,
     #[error("transport I/O: {0}")]
     Io(#[from] std::io::Error),
-    #[error("{flag} is not supported on this platform")]
-    InterfaceBindUnsupported { flag: &'static str },
+    #[error("binding egress to a specific network interface is not supported on this platform")]
+    InterfaceBindUnsupported,
 }
 
 /// Send and receive raw UDAP packets.

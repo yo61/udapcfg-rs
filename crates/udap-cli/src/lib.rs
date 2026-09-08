@@ -19,7 +19,13 @@ pub struct CliError {
 
 /// Builds a `udap::Client`. Injected so tests can substitute a
 /// mock-backed client without a mutable global.
-pub type ClientFactory = Box<dyn Fn() -> Result<udap::Client, anyhow::Error>>;
+///
+/// Takes the `--bind-interface` target pre-resolved (see
+/// [`build_client`]'s doc comment for why) rather than a bare name, so
+/// `enumerate()` runs exactly once per invocation regardless of how many
+/// times the factory itself gets called.
+pub type ClientFactory =
+    Box<dyn Fn(Option<&udap::NetInterface>) -> Result<udap::Client, anyhow::Error>>;
 
 /// Builds the client the CLI's flags describe.
 ///
@@ -34,17 +40,26 @@ pub type ClientFactory = Box<dyn Fn() -> Result<udap::Client, anyhow::Error>>;
 /// already bound to the real UDAP port in a shared test environment;
 /// production (`main.rs`) always passes `udap::PORT`.
 ///
+/// `resolved_interface` is the already-enumerated match for
+/// `--bind-interface NAME`, computed once by [`run`]'s pre-dispatch
+/// check. This function does not call `udap::interfaces::enumerate`
+/// itself: `Client::for_interface` would (a second sweep on top of
+/// `run`'s), and the two sweeps are a TOCTOU window -- an interface that
+/// vanishes between them would surface as an operation failure (exit 2)
+/// via the factory instead of the usage error (exit 1) `run` already
+/// decided on the first sweep.
+///
 /// # Errors
-/// Whatever `udap::Client::for_interface` / `udap::Client::with_udp` /
-/// `udap::Client::for_all_interfaces` return.
+/// Whatever `udap::Client::for_resolved_interface` /
+/// `udap::Client::with_udp` / `udap::Client::for_all_interfaces` return.
 pub fn build_client(
-    bind_interface: Option<&str>,
+    resolved_interface: Option<&udap::NetInterface>,
     all_interfaces: bool,
     retries: usize,
     port: u16,
 ) -> Result<udap::Client, anyhow::Error> {
-    let mut client = if let Some(name) = bind_interface {
-        udap::Client::for_interface(name, port)?
+    let mut client = if let Some(iface) = resolved_interface {
+        udap::Client::for_resolved_interface(iface, port)?
     } else if all_interfaces {
         udap::Client::for_all_interfaces(port)?
     } else {
@@ -66,25 +81,43 @@ pub async fn run(
 ) -> Result<(), CliError> {
     // Validate before dispatch, not in the factory: the factory's error is
     // mapped to exit 2 by every subcommand, and go-udap treats an unusable
-    // interface as a usage error (cli/cli.go:124).
-    if let Some(name) = cli.bind_interface.as_deref() {
-        let ifs = udap::interfaces::enumerate().map_err(|e| CliError {
-            code: 2,
-            source: anyhow::Error::new(e).context("enumerate interfaces"),
-        })?;
-        if !ifs.iter().any(|i| i.name == name) {
-            return Err(CliError {
-                code: 1,
-                source: anyhow::anyhow!(
-                    "--bind-interface: {name:?} is not usable \
-                     (must be up, broadcast-capable, with an IPv4 address)"
-                ),
-            });
+    // interface as a usage error (cli/cli.go:124). This is also the only
+    // place `--bind-interface` enumerates: the resolved `NetInterface`
+    // (not just its name) travels into the factory via `build_client`,
+    // so `Client::for_interface`'s own enumerate never runs for the CLI
+    // path -- one sweep per invocation, not two, and no TOCTOU window
+    // between them.
+    let resolved_interface = match cli.bind_interface.as_deref() {
+        Some(name) => {
+            let ifs = udap::interfaces::enumerate().map_err(|e| CliError {
+                code: 2,
+                source: anyhow::Error::new(e).context("enumerate interfaces"),
+            })?;
+            let Some(iface) = ifs.into_iter().find(|i| i.name == name) else {
+                return Err(CliError {
+                    code: 1,
+                    source: anyhow::anyhow!(
+                        "--bind-interface: {name:?} {}",
+                        udap::interfaces::NOT_USABLE_REASON
+                    ),
+                });
+            };
+            Some(iface)
         }
-    }
+        None => None,
+    };
 
     match cli.command {
-        Command::Discover => cmd::discover::run(make_client, cli.timeout, stdout, stderr).await,
+        Command::Discover => {
+            cmd::discover::run(
+                make_client,
+                resolved_interface.as_ref(),
+                cli.timeout,
+                stdout,
+                stderr,
+            )
+            .await
+        }
         Command::Interfaces => cmd::interfaces::run(stdout, stderr, udap::interfaces::enumerate),
     }
 }

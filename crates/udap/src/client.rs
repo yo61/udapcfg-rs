@@ -18,9 +18,7 @@ pub enum ClientError {
     Recv(#[source] TransportError),
     #[error("enumerate interfaces: {0}")]
     Interface(#[from] crate::interfaces::InterfaceError),
-    #[error(
-        "--bind-interface: {name:?} is not usable (must be up, broadcast-capable, with an IPv4 address)"
-    )]
+    #[error("interface {name:?} {}", crate::interfaces::NOT_USABLE_REASON)]
     NoSuchInterface { name: String },
     #[error("no usable interfaces found")]
     NoUsableInterfaces,
@@ -203,6 +201,11 @@ impl Client {
     ///
     /// # Errors
     /// [`ClientError::Bind`] if the socket cannot be created.
+    ///
+    /// # Panics
+    /// Constructs a real `tokio::net::UdpSocket`, which panics if called
+    /// outside a Tokio runtime context (`"there is no reactor running"`).
+    /// Callers must be inside `#[tokio::main]` or an equivalent runtime.
     pub fn with_udp(port: u16) -> Result<Self, ClientError> {
         let transport = crate::transport::UdpTransport::bind(port)?;
         Ok(Self::new(Box::new(transport)))
@@ -210,10 +213,19 @@ impl Client {
 
     /// A client whose egress is pinned to the named interface.
     ///
+    /// Enumerates interfaces itself to resolve `name`. A caller that has
+    /// already enumerated (as `udap-cli` does, to give an unusable name
+    /// its own exit code ahead of client construction) should call
+    /// [`Self::for_resolved_interface`] instead, to avoid a second sweep
+    /// and the TOCTOU window between two independent enumerations.
+    ///
     /// # Errors
     /// [`ClientError::NoSuchInterface`] if no usable interface has that
     /// name, [`ClientError::Interface`] if enumeration fails, or
     /// [`ClientError::Bind`].
+    ///
+    /// # Panics
+    /// See [`Self::with_udp`] — same underlying socket construction.
     pub fn for_interface(name: &str, port: u16) -> Result<Self, ClientError> {
         let ifaces = crate::interfaces::enumerate()?;
         let iface = ifaces.into_iter().find(|i| i.name == name).ok_or_else(|| {
@@ -221,7 +233,27 @@ impl Client {
                 name: name.to_owned(),
             }
         })?;
-        let transport = crate::transport::UdpTransport::bind_on_interface(&iface, port)?;
+        Self::for_resolved_interface(&iface, port)
+    }
+
+    /// A client whose egress is pinned to `iface`, already resolved by
+    /// the caller (typically via [`crate::interfaces::enumerate`]).
+    ///
+    /// Unlike [`Self::for_interface`], this does no enumeration of its
+    /// own — the caller supplies the exact interface to bind, so there is
+    /// nothing here to disagree with a separate name lookup done earlier.
+    ///
+    /// # Errors
+    /// [`ClientError::Bind`] if the socket cannot be created or bound to
+    /// `iface`.
+    ///
+    /// # Panics
+    /// See [`Self::with_udp`] — same underlying socket construction.
+    pub fn for_resolved_interface(
+        iface: &crate::interfaces::NetInterface,
+        port: u16,
+    ) -> Result<Self, ClientError> {
+        let transport = crate::transport::UdpTransport::bind_on_interface(iface, port)?;
         Ok(Self::new(Box::new(transport)))
     }
 
@@ -233,6 +265,10 @@ impl Client {
     /// [`ClientError::NoUsableInterfaces`] if enumeration finds none, or
     /// [`ClientError::NoInterfaceBound`] if some exist but none bind —
     /// matching go-udap's two distinct messages (`client.go:437,451`).
+    ///
+    /// # Panics
+    /// See [`Self::with_udp`] — same underlying socket construction, once
+    /// per usable interface.
     pub fn for_all_interfaces(port: u16) -> Result<Self, ClientError> {
         let ifaces = crate::interfaces::enumerate()?;
         if ifaces.is_empty() {
@@ -304,6 +340,26 @@ fn hex_encode(value: &[u8]) -> String {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Pins `ClientError::NoSuchInterface`'s wording to go-udap's own
+    /// library-level message (`udap/client.go:425`): no `--bind-interface`
+    /// flag name, because this variant is reachable from any consumer of
+    /// the `udap` crate, not only `udap-cli`. The CLI's own exit-1 usage
+    /// message is a separate template (matching `cli/cli.go:124`, which
+    /// does name the flag); both draw their "is not usable (...)" clause
+    /// from the same `interfaces::NOT_USABLE_REASON` constant, so this
+    /// test and `udap-cli`'s `unknown_bind_interface_is_a_usage_error`
+    /// together catch either side silently drifting from the other.
+    #[test]
+    fn no_such_interface_matches_go_udaps_library_wording() {
+        let err = ClientError::NoSuchInterface {
+            name: "en9".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "interface \"en9\" is not usable (must be up, broadcast-capable, with an IPv4 address)"
+        );
+    }
 
     /// Hands back exactly one packet — a request-flagged broadcast, which
     /// is what a real socket loops back to the sender — then reports

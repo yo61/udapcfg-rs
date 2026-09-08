@@ -25,15 +25,9 @@ async fn main() -> ExitCode {
         .init();
 
     let retries = cli.retries;
-    let bind_interface = cli.bind_interface.clone();
     let all_interfaces = cli.all_interfaces;
-    let factory: ClientFactory = Box::new(move || {
-        build_client(
-            bind_interface.as_deref(),
-            all_interfaces,
-            retries,
-            udap::PORT,
-        )
+    let factory: ClientFactory = Box::new(move |resolved_interface| {
+        build_client(resolved_interface, all_interfaces, retries, udap::PORT)
     });
 
     let mut stdout = std::io::stdout();

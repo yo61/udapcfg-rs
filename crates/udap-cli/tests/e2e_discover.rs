@@ -7,7 +7,7 @@ use udap_cli::{Cli, Command, run};
 /// `allow-unwrap-in-tests` applies) decode to `String` themselves.
 async fn run_cli(device_count: usize, timeout_ms: i64) -> (Vec<u8>, Vec<u8>, i32) {
     let network = Arc::new(mocksbr::Network::with_auto_devices(device_count));
-    let factory = Box::new(move || {
+    let factory = Box::new(move |_resolved_interface: Option<&udap::NetInterface>| {
         Ok(udap::Client::new(Box::new(mocksbr::MockTransport::new(
             Arc::clone(&network),
         ))))
@@ -94,7 +94,7 @@ fn negative_retries_is_rejected() {
 #[tokio::test]
 async fn unknown_bind_interface_is_a_usage_error() {
     let factory: udap_cli::ClientFactory =
-        Box::new(|| Err(anyhow::anyhow!("factory must not be reached")));
+        Box::new(|_resolved_interface| Err(anyhow::anyhow!("factory must not be reached")));
     let cli = Cli {
         timeout: GoDuration::from(50_000_000),
         verbose: false,
@@ -112,10 +112,15 @@ async fn unknown_bind_interface_is_a_usage_error() {
     // go-udap treats this as a usage error, not an operation failure
     // (cli/cli.go:124 returns ExitError{Code: 1}).
     assert_eq!(e.code, 1, "unusable interface must exit 1, not 2");
-    assert!(
-        e.source.to_string().contains("is not usable"),
-        "message must match go-udap: {}",
-        e.source
+    // Exact string, not just a substring: this is go-udap's cli.go:124
+    // wording byte-for-byte, and udap-cli's own message and
+    // udap::ClientError::NoSuchInterface's Display both draw the "is not
+    // usable (...)" clause from the same udap::interfaces::NOT_USABLE_REASON
+    // constant, so an exact match here is what would catch either side
+    // silently drifting from the other or from go-udap.
+    assert_eq!(
+        e.source.to_string(),
+        "--bind-interface: \"definitely-not-an-interface0\" is not usable (must be up, broadcast-capable, with an IPv4 address)"
     );
     assert!(out.is_empty(), "stdout stays clean on a usage error");
 }

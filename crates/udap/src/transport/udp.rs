@@ -108,9 +108,7 @@ fn bind_to_interface(sock: &Socket, iface: &NetInterface) -> Result<(), Transpor
     target_os = "android"
 )))]
 fn bind_to_interface(_sock: &Socket, _iface: &NetInterface) -> Result<(), TransportError> {
-    Err(TransportError::InterfaceBindUnsupported {
-        flag: "--bind-interface",
-    })
+    Err(TransportError::InterfaceBindUnsupported)
 }
 
 #[async_trait]
