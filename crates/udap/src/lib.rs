@@ -8,6 +8,7 @@ pub mod mac;
 pub mod parameters;
 pub mod protocol;
 pub mod tlv;
+pub mod transport;
 
 pub use error::{EncodeError, GetDataError, ProtocolError};
 pub use mac::{Mac, MacParseError};
