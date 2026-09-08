@@ -19,3 +19,22 @@ pub enum EncodeError {
     #[error("cannot parse {value:?} as an IPv4 address")]
     NotIpv4 { value: String },
 }
+
+/// Errors from decoding a `GetData` response payload.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GetDataError {
+    #[error("getdata response: payload too short ({got} bytes)")]
+    PayloadTooShort { got: usize },
+    #[error("getdata response: truncated header for item {index} at offset {pos}")]
+    TruncatedHeader { index: usize, pos: usize },
+    #[error(
+        "getdata response: item {index} (NVRAM offset {offset}, length {length}) \
+         exceeds payload ({remaining} bytes left)"
+    )]
+    ItemExceedsPayload {
+        index: usize,
+        offset: u16,
+        length: u16,
+        remaining: usize,
+    },
+}
