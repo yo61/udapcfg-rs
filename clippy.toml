@@ -1,0 +1,4 @@
+# The workspace denies unwrap/expect in production code. Tests are exempt:
+# a panic in a test IS the failure signal.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
