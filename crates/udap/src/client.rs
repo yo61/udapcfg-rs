@@ -16,6 +16,14 @@ pub enum ClientError {
     Send(#[source] TransportError),
     #[error("recv during discovery: {0}")]
     Recv(#[source] TransportError),
+    #[error("enumerate interfaces: {0}")]
+    Interface(#[from] crate::interfaces::InterfaceError),
+    #[error(
+        "--bind-interface: {name:?} is not usable (must be up, broadcast-capable, with an IPv4 address)"
+    )]
+    NoSuchInterface { name: String },
+    #[error("bind: {0}")]
+    Bind(#[from] crate::transport::TransportError),
 }
 
 /// Discovery-response TLV codes, per `Net::UDAP` `Constant.pm`.
@@ -175,6 +183,34 @@ impl Client {
         let device = parse_discovery_response(payload, src, &packet);
         info!(mac = %device.mac, name = %device.name, ip = %device.ip, "found device");
         self.devices.insert(device.mac, device);
+    }
+}
+
+impl Client {
+    /// A client on a real UDP socket bound to `0.0.0.0:port`.
+    ///
+    /// # Errors
+    /// [`ClientError::Bind`] if the socket cannot be created.
+    pub fn with_udp(port: u16) -> Result<Self, ClientError> {
+        let transport = crate::transport::UdpTransport::bind(port)?;
+        Ok(Self::new(Box::new(transport)))
+    }
+
+    /// A client whose egress is pinned to the named interface.
+    ///
+    /// # Errors
+    /// [`ClientError::NoSuchInterface`] if no usable interface has that
+    /// name, [`ClientError::Interface`] if enumeration fails, or
+    /// [`ClientError::Bind`].
+    pub fn for_interface(name: &str, port: u16) -> Result<Self, ClientError> {
+        let ifaces = crate::interfaces::enumerate()?;
+        let iface = ifaces.into_iter().find(|i| i.name == name).ok_or_else(|| {
+            ClientError::NoSuchInterface {
+                name: name.to_owned(),
+            }
+        })?;
+        let transport = crate::transport::UdpTransport::bind_on_interface(&iface, port)?;
+        Ok(Self::new(Box::new(transport)))
     }
 }
 

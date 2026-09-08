@@ -7,7 +7,14 @@ use udap_cli::{Cli, ClientFactory, run};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            // clap writes its own message; go-udap uses exit 1 for usage errors.
+            let _ = e.print();
+            return ExitCode::from(u8::from(e.use_stderr()));
+        }
+    };
 
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -19,12 +26,23 @@ async fn main() -> ExitCode {
         .init();
 
     let retries = cli.retries;
+    let bind_interface = cli.bind_interface.clone();
+    let all_interfaces = cli.all_interfaces;
     let factory: ClientFactory = Box::new(move || {
-        // M3 replaces this with the real UDP transport.
-        Err(anyhow::anyhow!(
-            "no transport available yet: the UDP transport lands in M3 \
-             (retries={retries} will apply then)"
-        ))
+        let mut client = if let Some(name) = bind_interface.as_deref() {
+            udap::Client::for_interface(name, udap::PORT)?
+        } else if all_interfaces {
+            // TODO(M3 task 4): replace with Client::for_all_interfaces once
+            // MultiTransport lands; this arm exists only so this task
+            // compiles and its own tests pass standalone.
+            return Err(anyhow::anyhow!(
+                "--all-interfaces lands with MultiTransport in the next task"
+            ));
+        } else {
+            udap::Client::with_udp(udap::PORT)?
+        };
+        client.set_retries(retries);
+        Ok(client)
     });
 
     let mut stdout = std::io::stdout();

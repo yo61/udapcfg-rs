@@ -32,6 +32,19 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "N", default_value_t = 0)]
     pub retries: usize,
 
+    /// Bind discovery to one network interface
+    #[arg(
+        long,
+        global = true,
+        value_name = "NAME",
+        conflicts_with = "all_interfaces"
+    )]
+    pub bind_interface: Option<String>,
+
+    /// Broadcast on every usable interface (fan-out)
+    #[arg(long, global = true)]
+    pub all_interfaces: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
