@@ -180,9 +180,11 @@ we should not casually exceed that.
 | Crate | Version | Replaces | Justification |
 | --- | --- | --- | --- |
 | `tokio` (rt, net, time, sync, macros) | 1.53 | goroutines, channels, `context` | Async runtime (ADR-1). `current_thread` flavour — no worker pool |
-| `tokio-util` (rt) | 0.7 | `context.Context` cancellation | `CancellationToken` (ADR-2) |
+| `tokio-util` | 0.7 | `context.Context` cancellation | `CancellationToken` (ADR-2). No features needed — `tokio_util::sync` is not feature-gated |
+| `async-trait` | 0.1 | Go interface methods | `Transport` needs `dyn` dispatch, and AFIT traits are still not `dyn`-compatible in Rust 1.98. Drop it if that lands |
 | `clap` (derive, wrap_help) | 4.6 | cobra + pflag | Subcommands, help, and the derive/builder mix the generated flags need |
 | `indicatif` | 0.18 | `cli/progress.go`, `cli/stderr.go` | Progress bar. Replaces the ticker, the erase-line dance, and the TTY check — see [Progress bar](#progress-bar) |
+| `netdev` (no default features) | 0.46 | `net.Interfaces()` | Interface enumeration with real `IFF_*` flags — see [OQ-1](#open-questions) |
 | `socket2` (all) | 0.6 | `syscall.Setsockopt*`, `net.ListenConfig` | `SO_BROADCAST`, `SO_REUSEPORT`, interface binding. `all` feature gates `bind_device_by_index_v4`. See [socket construction](#socket-construction) |
 | `thiserror` | 2.0 | `fmt.Errorf` in `udap` | Library error enums |
 | `anyhow` | 1.0 | `fmt.Errorf` in `cli` | Application error context |
@@ -408,13 +410,31 @@ this becomes a spec amendment, not a silent addition.
 
 Numbered so they can be closed individually. None block M1.
 
-**OQ-1 — interface enumeration.** `udap/interfaces.go` uses Go's
-`net.Interfaces()` for name, index, IPv4 address, and the Up/Broadcast/!Loopback
-flags. Rust's std has no equivalent. Candidates: `if-addrs`, `network-interface`,
-`nix` + raw `getifaddrs`. Needs a maintenance and cross-platform check
-(macOS/Linux/Windows) before choosing. *Blocks M2.* **Resolve by:** comparing
-crate maintenance and testing enumeration output against `go-udap interfaces` on
-both platforms.
+**OQ-1 — interface enumeration. RESOLVED: `netdev`.**
+`EnumerateInterfaces` needs five things per interface — name, index, first IPv4
+address, netmask, and three flags (Up, Broadcast, Loopback). The flags are the
+discriminator: the Broadcast test is what keeps discovery from fanning out
+across WireGuard and Tailscale tunnels, which do not carry `IFF_BROADCAST`.
+
+| Crate | index | netmask | Up | Broadcast | Loopback |
+| --- | --- | --- | --- | --- | --- |
+| **`netdev` 0.46.2** | `u32` | prefix len | `is_up()` → `IFF_UP` | `is_broadcast()` → `IFF_BROADCAST` | `is_loopback()` → `IFF_LOOPBACK` |
+| `if-addrs` 0.15.0 | `Option<u32>` | yes | `oper_status` (RFC 2863, not `IFF_UP`) | not exposed | from the *IP*, not the flag |
+
+`netdev` is the only candidate exposing all three real `IFF_*` bits, which is
+exactly what `iface.Flags & net.FlagBroadcast` tests. `if-addrs` would force the
+broadcast filter to be inferred from whether a broadcast address happened to get
+populated — an undocumented internal detail to hang the VPN filter on. `netdev`
+is also the most actively maintained candidate (released 2026-09-04).
+
+Take it as `netdev = { version = "0.46", default-features = false }`. The
+default features pull in `gateway` detection and
+`apple-system-configuration-extra`, which drags Objective-C bindings
+(`objc2-system-configuration`) onto macOS. Disabled, the tree is `mac-addr` +
+`ipnet` + `libc`, plus netlink crates on Linux only.
+
+*Verify at M3:* that `flags` is still populated with default features off.
+Flags come from `getifaddrs`, so it should be, but confirm rather than assume.
 
 **OQ-2 — `SO_BINDTOIFINDEX` privileges.** `SO_BINDTODEVICE` needs `CAP_NET_RAW`
 on most Linux distributions, and go-udap's error message says so. Whether
