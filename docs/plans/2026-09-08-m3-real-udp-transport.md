@@ -660,6 +660,12 @@ fn negative_retries_is_rejected() {
 And in `crates/udap/tests/discovery.rs`, a test proving retries reach the wire:
 
 ```rust
+// Add to the file's existing imports. `use std::sync::Arc;` is already
+// line 1 of discovery.rs -- re-importing it is E0252, and `-D warnings`
+// makes that fatal. Only the atomics are new, and they must be at module
+// scope because CountingTransport below is a module-level item.
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 /// A transport that counts sends and never replies.
 ///
 /// The counter is an `Arc<AtomicUsize>` the test also holds, so the
@@ -690,9 +696,6 @@ impl udap::transport::Transport for CountingTransport {
 
 #[tokio::test]
 async fn retries_n_produces_n_plus_one_sends() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-
     let sends = Arc::new(AtomicUsize::new(0));
     let mut client = Client::new(Box::new(CountingTransport {
         sends: Arc::clone(&sends),
