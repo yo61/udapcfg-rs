@@ -7,14 +7,13 @@ use udap_cli::{Cli, ClientFactory, run};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
-        Err(e) => {
-            // clap writes its own message; go-udap uses exit 1 for usage errors.
-            let _ = e.print();
-            return ExitCode::from(u8::from(e.use_stderr()));
-        }
-    };
+    // clap's own parse-failure exit codes already match go-udap: 2 for a
+    // usage error (cobra/pflag's own parse errors are never wrapped in
+    // go-udap's ExitError, so they fall through to ExitCode's default of
+    // 2 -- see cli.go's ExitCode/PersistentPreRunE), 0 for --help/--version.
+    // No custom mapping needed: `Cli::parse()` calls `clap::Error::exit()`
+    // internally, which already reproduces that split.
+    let cli = Cli::parse();
 
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
