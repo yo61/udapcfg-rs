@@ -1,7 +1,9 @@
 //! The UDAP client: owns a transport and the map of discovered devices.
 
 use crate::device::{Device, combine_model};
-use crate::protocol::{ADDR_TYPE_ETH, FLAG_REQUEST, Packet, UAP_CLASS_UCP, UDAP_TYPE_UCP, method};
+use crate::protocol::{
+    ADDR_TYPE_ETH, FLAG_REQUEST, Packet, UAP_CLASS_UCP, UDAP_TYPE_UCP, is_request_packet, method,
+};
 use crate::transport::{Transport, TransportError};
 use crate::{Mac, tlv};
 use std::collections::BTreeMap;
@@ -138,6 +140,20 @@ impl Client {
     }
 
     fn handle_discovery_reply(&mut self, bytes: &[u8], src: &str) {
+        // We broadcast with the request bit set and the kernel loops that
+        // packet straight back to us on a real socket. go-udap drops it in
+        // the capture path (udap/transport.go:105) and M3's UDP transport
+        // will do the same, but the guard belongs here too: the invariant
+        // is that the client records devices rather than its own echoes,
+        // and it should not depend on which transport sits underneath.
+        //
+        // Without it the echo parses cleanly — Ethernet source type, empty
+        // payload — and lands as a device with MAC 00:00:00:00:00:00 named
+        // "Squeezebox Device".
+        if is_request_packet(bytes) {
+            debug!(src, "ignoring our own looped-back request");
+            return;
+        }
         let (packet, payload) = match Packet::from_bytes(bytes) {
             Ok(parsed) => parsed,
             Err(e) => {
@@ -204,4 +220,71 @@ fn hex_encode(value: &[u8]) -> String {
         let _ = write!(s, "{byte:02x}");
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Hands back exactly one packet — a request-flagged broadcast, which
+    /// is what a real socket loops back to the sender — then reports
+    /// cancellation so `discover` returns the way a timeout would.
+    ///
+    /// `mocksbr` cannot stand in here: its replies clear the request bit
+    /// (`responses.rs:20`), which is precisely the case being excluded.
+    #[derive(Default)]
+    struct LoopsBackOwnRequest {
+        yielded: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl Transport for LoopsBackOwnRequest {
+        async fn send(&self, _packet: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        async fn recv(
+            &self,
+            _cancel: &CancellationToken,
+        ) -> Result<(Vec<u8>, String), TransportError> {
+            if self.yielded.swap(true, Ordering::SeqCst) {
+                return Err(TransportError::Cancelled);
+            }
+            // Byte-for-byte what `next_packet` builds for discovery.
+            let echo = Packet {
+                dst_broadcast: 1,
+                dst_type: ADDR_TYPE_ETH,
+                dst_address: Mac::ZERO,
+                src_broadcast: 0,
+                src_type: ADDR_TYPE_ETH,
+                src_address: Mac::ZERO,
+                sequence: 1,
+                udap_type: UDAP_TYPE_UCP,
+                ucp_flags: FLAG_REQUEST,
+                uap_class: UAP_CLASS_UCP,
+                ucp_method: method::ADV_DISC,
+            };
+            Ok((echo.to_bytes().to_vec(), "192.0.2.1".to_owned()))
+        }
+
+        async fn close(&self) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn ignores_our_own_looped_back_broadcast() {
+        let mut client = Client::new(Box::new(LoopsBackOwnRequest::default()));
+
+        client
+            .discover(&CancellationToken::new())
+            .await
+            .expect("a cancelled receive ends discovery cleanly");
+
+        assert!(
+            client.devices().is_empty(),
+            "our own broadcast was recorded as a device"
+        );
+    }
 }
