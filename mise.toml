@@ -1,4 +1,4 @@
-# Toolchain for udap-rs.
+# Toolchain for udapcfg-rs.
 #
 # Versions are pinned exactly (project standard: pin exact versions, never
 # ranges). Refresh deliberately with `mise outdated` / `mise upgrade`, then

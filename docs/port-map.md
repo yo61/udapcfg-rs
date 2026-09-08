@@ -17,7 +17,7 @@ one-to-one onto a Cargo workspace.
 | --- | --- | --- |
 | `udap/` | `udap` | lib |
 | `mocksbr/` + `cmd/mocksbr/` | `mocksbr` | lib + bin |
-| `cli/` + `main.go` | `udap-cli` | bin (`udap-rs`) |
+| `cli/` + `main.go` | `udap-cli` | bin (`udapcfg`) |
 | `cmd/docs/` | `xtask` | bin (dev-only) |
 
 One thing Cargo permits that Go does not: a dev-dependency cycle. `udap`'s tests
@@ -60,7 +60,7 @@ it is really testing `udap`. Expect to move some tests inward.
 | `find.go` | `cmd/find.rs` | Discover-then-match-by-MAC helper. |
 | `source.go`, `config.go` | `source.rs`, `ini.rs` | INI parse + the file/stdin/flag layering. Mechanical. |
 | `output.go` | `output.rs` | Write to `&mut dyn Write`. Good `insta` snapshot targets. |
-| `progress.go`, `stderr.go` | `progress.rs` | `tokio::spawn` + `interval`, writing through `Arc<Mutex<StderrSync>>`. `std::io::IsTerminal` replaces the `Stat()` TTY check — no dependency. |
+| `progress.go`, `stderr.go` | `progress.rs` | Mostly deleted — `indicatif` provides the tick, the suspend-on-write, and the TTY check. Only the 500 ms start delay stays custom. |
 | `completion.go` | `xtask` | `clap_complete` generates from the same `Command`. |
 | `deverr.go` | `error.rs` | `ExitError{Code, Err}` → enum with `exit_code()`. |
 | `uuidfallback.go`, `set_interface_default.go` | `cmd/*.rs` | Small behavioural helpers; port with their tests. |
@@ -310,6 +310,7 @@ both the global and the "e2e tests must not be `t.Parallel`" constraint.
 
 | Deleted | Why | ~Lines |
 | --- | --- | --- |
+| Most of `progress.go` + `stderr.go` | `indicatif` | ~200 |
 | `socket_darwin.go` + `socket_linux.go` | One cross-platform `socket2` call | ~120 |
 | `params.go`'s three `*WithPlaceholder` types | `value_name` attribute | ~100 |
 | `logger.go` | `tracing` | ~135 |

@@ -1,4 +1,4 @@
-# udap-rs — port specification
+# udapcfg-rs — port specification
 
 **Status:** draft, awaiting review
 **Date:** 2026-09-08
@@ -25,7 +25,7 @@ work is translation rather than design.
 
 ## Success criteria
 
-1. `udap-rs` produces byte-identical UDAP packets to go-udap for every operation,
+1. `udapcfg` produces byte-identical UDAP packets to go-udap for every operation,
    verified against the same wire captures.
 2. Every go-udap CLI invocation produces identical stdout, stderr, and exit code.
 3. `mocksbr` drives the Rust CLI through the same e2e scenarios the Go suite
@@ -44,7 +44,7 @@ there.
 | Surface | Contract |
 | --- | --- |
 | Wire bytes | Identical for all six UCP methods, including field order, padding, and the sort-by-offset in `get_data`/`set_data` |
-| Binary name | **`udap-rs`**, not `go-udap` — the two must be installable side by side. See the exception below |
+| Binary name | **`udapcfg`**, not `go-udap` — the two must be installable side by side. See the exception below |
 | Subcommands | `discover`, `info`, `read`, `get`, `set`, `reboot`, `getip`, `interfaces` |
 | Global flags | `--timeout`, `--retries`, `--verbose/-v`, `--version`, `--help/-h`, `--bind-interface`, `--all-interfaces`; accepted before *or* after the subcommand |
 | Exit codes | 0 success, 1 usage error, 2 operation failure |
@@ -53,13 +53,13 @@ there.
 | Retries | `--retries N` = N *re-transmissions* beyond the initial send, no inter-send delay |
 | Broadcast target | Always `255.255.255.255`, never a directed subnet broadcast |
 
-**Program-name exception.** Because the binary is `udap-rs`, "identical output"
+**Program-name exception.** Because the binary is `udapcfg`, "identical output"
 means *identical modulo the program name*. Affected surfaces:
 
-- `--help` and all subcommand help (usage lines, "Usage: udap-rs …")
+- `--help` and all subcommand help (usage lines, "Usage: udapcfg …")
 - usage-error messages on stderr
-- `--version`, which prints `udap-rs X.Y.Z` rather than `go-udap X.Y.Z`
-- man page filenames (`udap-rs.1`, `udap-rs-discover.1`, …) and their `.TH` header
+- `--version`, which prints `udapcfg X.Y.Z` rather than `go-udap X.Y.Z`
+- man page filenames (`udapcfg.1`, `udapcfg-discover.1`, …) and their `.TH` header
 - completion script names and their internal function prefixes
 
 Everywhere else — device output, parameter dumps, the `interfaces` table, error
@@ -151,22 +151,24 @@ It changes no observable behaviour.
 ## Crate layout
 
 ```
-udap-rs/
+udapcfg-rs/
 ├── Cargo.toml              # [workspace]
 ├── mise.toml               # pinned toolchain
 ├── crates/
 │   ├── udap/               # protocol, transport, client — no I/O beyond UDP
 │   ├── mocksbr/            # fake Squeezebox Receiver (lib + bin)
-│   └── udap-cli/           # produces the `udap-rs` binary
+│   └── udap-cli/           # produces the `udapcfg` binary
 └── xtask/                  # man pages, completions, release helpers
 ```
 
-The CLI crate is `udap-cli` but its binary is `udap-rs`, set explicitly so the
-crate name does not collide with the workspace directory:
+The CLI crate is `udap-cli` but its binary is `udapcfg`. The suffix-free binary
+name is deliberate: `go-udap` encoded its implementation language into what
+users type, and `-rs` would repeat that mistake. The marker belongs on the
+repo, where it disambiguates in a listing, not on the command:
 
 ```toml
 [[bin]]
-name = "udap-rs"
+name = "udapcfg"
 path = "src/main.rs"
 ```
 
@@ -180,6 +182,7 @@ we should not casually exceed that.
 | `tokio` (rt, net, time, sync, macros) | 1.53 | goroutines, channels, `context` | Async runtime (ADR-1). `current_thread` flavour — no worker pool |
 | `tokio-util` (rt) | 0.7 | `context.Context` cancellation | `CancellationToken` (ADR-2) |
 | `clap` (derive, wrap_help) | 4.6 | cobra + pflag | Subcommands, help, and the derive/builder mix the generated flags need |
+| `indicatif` | 0.18 | `cli/progress.go`, `cli/stderr.go` | Progress bar. Replaces the ticker, the erase-line dance, and the TTY check — see [Progress bar](#progress-bar) |
 | `socket2` (all) | 0.6 | `syscall.Setsockopt*`, `net.ListenConfig` | `SO_BROADCAST`, `SO_REUSEPORT`, interface binding. `all` feature gates `bind_device_by_index_v4`. See [socket construction](#socket-construction) |
 | `thiserror` | 2.0 | `fmt.Errorf` in `udap` | Library error enums |
 | `anyhow` | 1.0 | `fmt.Errorf` in `cli` | Application error context |
@@ -193,12 +196,33 @@ we should not casually exceed that.
 Versions are current stable as of 2026-09-08 (verified against the crates.io
 API). Pin exact versions per the project standard.
 
-**Explicitly not taken:** `serde` (ADR-4), `indicatif` (`cli/stderr.go`
-implements a specific bar-versus-log interleaving contract that is likely more
-fiddly to reproduce through indicatif than to port directly; `std::io::IsTerminal`
-covers TTY detection with no dependency), `deku`/`binrw` (one 27-byte struct
+**Explicitly not taken:** `serde` (ADR-4), `deku`/`binrw` (one 27-byte struct
 does not justify a proc macro), `hex` (the Go hand-rolls nibble decoding for the
-same reason).
+same reason), `tracing-indicatif` (the one integration point — clearing the bar
+around a log write — is a single `suspend()` call; a crate for that is not
+earned).
+
+### Progress bar
+
+`indicatif` subsumes most of what `cli/progress.go` and `cli/stderr.go` build by
+hand:
+
+| go-udap hand-rolls | indicatif |
+| --- | --- |
+| ticker goroutine | `enable_steady_tick(Duration)` |
+| `stderrSync`'s erase-then-write + `barActive` flag | `ProgressBar::suspend(\|\| ...)` |
+| `Stat() & ModeCharDevice` TTY check | automatic — `ProgressDrawTarget::term` tests `!term.is_term()` |
+| `\033[2K\r` erase-line escape | handled internally |
+| *(not handled)* | `TERM=dumb`, which the same check covers |
+
+So `stderr.go` largely disappears: instead of a mutex-wrapped writer tracking bar
+state, the `tracing` writer wraps its emit in `pb.suspend(...)`.
+
+**What indicatif does not give us** is go-udap's 500 ms start delay, which keeps
+fast operations from flashing a bar on and off. Implement it by constructing the
+bar with `ProgressDrawTarget::hidden()` and swapping to
+`ProgressDrawTarget::stderr()` once the delay elapses. Port
+`cli/progress_test.go`'s coverage of that behaviour.
 
 ### Socket construction
 
@@ -253,14 +277,14 @@ The thinnest vertical slice that runs. Discovery request encode; a `mocksbr`
 that answers `adv_disc` (0x0009) and nothing else; the in-process
 `MockTransport`; a `Transport` trait; a clap `discover` subcommand printing
 MACs. Introduces async, since the transport trait is async from the start.
-*Done when:* `udap-rs discover` against an in-process mock prints the same MAC
+*Done when:* `udapcfg discover` against an in-process mock prints the same MAC
 list `go-udap discover` does. **This is the first milestone with a working
 binary.**
 
 **M3 — real transport** (`transport/udp`, `interfaces`, Windows `#[cfg]` arm)
 Swap the mock for a real socket: `socket2` construction, the tokio hand-off,
 `--bind-interface`, `--all-interfaces` via `MultiTransport`. *Done when:*
-`udap-rs discover` finds a real device on real hardware, on macOS and Linux.
+`udapcfg discover` finds a real device on real hardware, on macOS and Linux.
 
 **M4 — remaining operations** (`client`, `ops/*`, `validation`, `netconfig`)
 `get_data`, `set_data`, `reset`, `get_ip`, `get_uuid`, plus the read-modify-write
