@@ -15,8 +15,5 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread"] }
-
 [lints]
 workspace = true

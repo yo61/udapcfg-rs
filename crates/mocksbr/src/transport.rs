@@ -18,6 +18,13 @@ pub struct MockTransport {
     network: Arc<Network>,
     sender: mpsc::UnboundedSender<(Vec<u8>, String)>,
     receiver: Mutex<mpsc::UnboundedReceiver<(Vec<u8>, String)>>,
+    /// Cancelled by `close`. A separate token from the one `recv`
+    /// callers pass in: that one scopes a single call, this one scopes
+    /// the transport's lifetime, so `close` wakes every pending (and
+    /// future) `recv` regardless of which caller-supplied token it was
+    /// given — matching go-udap's `MockTransport.Close`, which wakes a
+    /// blocked `Recv` immediately rather than leaving it to time out.
+    closed: CancellationToken,
 }
 
 impl MockTransport {
@@ -28,6 +35,7 @@ impl MockTransport {
             network,
             sender,
             receiver: Mutex::new(receiver),
+            closed: CancellationToken::new(),
         }
     }
 }
@@ -49,11 +57,13 @@ impl Transport for MockTransport {
         let mut receiver = self.receiver.lock().await;
         tokio::select! {
             () = cancel.cancelled() => Err(TransportError::Cancelled),
+            () = self.closed.cancelled() => Err(TransportError::Cancelled),
             reply = receiver.recv() => reply.ok_or(TransportError::Cancelled),
         }
     }
 
     async fn close(&self) -> Result<(), TransportError> {
+        self.closed.cancel();
         Ok(())
     }
 }
