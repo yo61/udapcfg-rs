@@ -89,10 +89,7 @@ pub async fn run(
     // between them.
     let resolved_interface = match cli.bind_interface.as_deref() {
         Some(name) => {
-            let ifs = udap::interfaces::enumerate().map_err(|e| CliError {
-                code: 2,
-                source: anyhow::Error::new(e).context("enumerate interfaces"),
-            })?;
+            let ifs = udap::interfaces::enumerate();
             let Some(iface) = ifs.into_iter().find(|i| i.name == name) else {
                 return Err(CliError {
                     code: 1,
@@ -118,7 +115,10 @@ pub async fn run(
             )
             .await
         }
-        Command::Interfaces => cmd::interfaces::run(stdout, stderr, udap::interfaces::enumerate),
+        Command::Interfaces => {
+            cmd::interfaces::run(stdout, stderr, udap::interfaces::enumerate);
+            Ok(())
+        }
     }
 }
 

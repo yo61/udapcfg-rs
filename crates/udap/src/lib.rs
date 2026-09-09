@@ -17,6 +17,6 @@ pub mod transport;
 pub use client::{Client, ClientError};
 pub use device::Device;
 pub use error::{EncodeError, GetDataError, ProtocolError};
-pub use interfaces::{InterfaceError, NetInterface};
+pub use interfaces::NetInterface;
 pub use mac::{Mac, MacParseError};
 pub use protocol::{HEADER_SIZE, PORT, Packet};

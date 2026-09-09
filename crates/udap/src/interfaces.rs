@@ -22,12 +22,6 @@ pub struct NetInterface {
     pub broadcast: Ipv4Addr,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum InterfaceError {
-    #[error("enumerate interfaces: {0}")]
-    Enumerate(String),
-}
-
 /// Why an interface fails the filter [`enumerate`] applies, phrased for
 /// direct interpolation into a "not usable" message.
 ///
@@ -68,9 +62,13 @@ fn directed_broadcast(addr: Ipv4Addr, prefix_len: u8) -> Ipv4Addr {
 /// interfaces do not set `IFF_BROADCAST`, so this is what keeps discovery
 /// off VPN tunnels.
 ///
-/// # Errors
-/// [`InterfaceError::Enumerate`] if the platform enumeration fails.
-pub fn enumerate() -> Result<Vec<NetInterface>, InterfaceError> {
+/// Infallible: `netdev::get_interfaces()` returns a bare `Vec`, not a
+/// `Result` — the underlying platform enumeration has no reported failure
+/// mode to propagate. An interface list that comes back empty or partial
+/// (e.g. a permissions problem) is indistinguishable from "no usable
+/// interfaces" and is handled the same way by every caller.
+#[must_use]
+pub fn enumerate() -> Vec<NetInterface> {
     let mut out = Vec::new();
     for iface in netdev::get_interfaces() {
         if !iface.is_up() || !iface.is_broadcast() || iface.is_loopback() {
@@ -86,7 +84,7 @@ pub fn enumerate() -> Result<Vec<NetInterface>, InterfaceError> {
             broadcast: directed_broadcast(net.addr(), net.prefix_len()),
         });
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
@@ -122,7 +120,7 @@ mod tests {
     // a fixed list: any host running this has at least a loopback to exclude.
     #[test]
     fn enumerate_applies_the_filter() {
-        let ifs = enumerate().expect("enumeration must not error");
+        let ifs = enumerate();
         for ni in &ifs {
             assert!(!ni.name.is_empty(), "interface with empty name");
             assert!(ni.index > 0, "{} has index 0", ni.name);
@@ -133,7 +131,7 @@ mod tests {
 
     #[test]
     fn enumerate_yields_one_entry_per_interface() {
-        let ifs = enumerate().expect("enumeration must not error");
+        let ifs = enumerate();
         let mut names: Vec<&str> = ifs.iter().map(|n| n.name.as_str()).collect();
         names.sort_unstable();
         let before = names.len();

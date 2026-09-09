@@ -16,8 +16,6 @@ pub enum ClientError {
     Send(#[source] TransportError),
     #[error("recv during discovery: {0}")]
     Recv(#[source] TransportError),
-    #[error("enumerate interfaces: {0}")]
-    Interface(#[from] crate::interfaces::InterfaceError),
     #[error("interface {name:?} {}", crate::interfaces::NOT_USABLE_REASON)]
     NoSuchInterface { name: String },
     #[error("no usable interfaces found")]
@@ -221,13 +219,12 @@ impl Client {
     ///
     /// # Errors
     /// [`ClientError::NoSuchInterface`] if no usable interface has that
-    /// name, [`ClientError::Interface`] if enumeration fails, or
-    /// [`ClientError::Bind`].
+    /// name, or [`ClientError::Bind`].
     ///
     /// # Panics
     /// See [`Self::with_udp`] — same underlying socket construction.
     pub fn for_interface(name: &str, port: u16) -> Result<Self, ClientError> {
-        let ifaces = crate::interfaces::enumerate()?;
+        let ifaces = crate::interfaces::enumerate();
         let iface = ifaces.into_iter().find(|i| i.name == name).ok_or_else(|| {
             ClientError::NoSuchInterface {
                 name: name.to_owned(),
@@ -270,7 +267,7 @@ impl Client {
     /// See [`Self::with_udp`] — same underlying socket construction, once
     /// per usable interface.
     pub fn for_all_interfaces(port: u16) -> Result<Self, ClientError> {
-        let ifaces = crate::interfaces::enumerate()?;
+        let ifaces = crate::interfaces::enumerate();
         if ifaces.is_empty() {
             return Err(ClientError::NoUsableInterfaces);
         }
