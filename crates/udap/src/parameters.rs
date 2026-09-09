@@ -440,6 +440,41 @@ mod tests {
         );
     }
 
+    /// The 2-byte branch is unreachable through `PARAMETERS`: no current
+    /// parameter has `length == 2`, so `encode_always_returns_exactly_length_bytes`
+    /// iterates the whole table and still never enters this arm. A synthetic
+    /// `Parameter` is the only way to cover it.
+    ///
+    /// Expectations are Go-derived, not hand-written: each case was run
+    /// through `strconv.ParseUint(value, 10, 16)` +
+    /// `binary.BigEndian.PutUint16`, which is what `Parameter.Encode`'s
+    /// `case 2` does in `udap/parameters.go`.
+    #[test]
+    fn encodes_two_byte_values_big_endian() {
+        let p = Parameter {
+            name: "synthetic",
+            offset: 0,
+            length: 2,
+            placeholder: "N",
+            help: "",
+            factory_default: "",
+        };
+
+        // Big-endian is the point: 258 is 0x0102, so `01 02`, never `02 01`.
+        assert_eq!(p.encode(b"0").unwrap(), vec![0x00, 0x00]);
+        assert_eq!(p.encode(b"1").unwrap(), vec![0x00, 0x01]);
+        assert_eq!(p.encode(b"258").unwrap(), vec![0x01, 0x02]);
+        assert_eq!(p.encode(b"65535").unwrap(), vec![0xff, 0xff]);
+
+        // Go's ParseUint rejects all of these; so must we.
+        assert!(p.encode(b"65536").is_err(), "overflows u16");
+        assert!(p.encode(b"-1").is_err(), "negative");
+        assert!(p.encode(b"nope").is_err(), "not a number");
+        assert!(p.encode(b"").is_err(), "empty");
+        assert!(p.encode(b" 1").is_err(), "leading whitespace");
+        assert!(p.encode(b"1.5").is_err(), "decimal");
+    }
+
     #[test]
     fn encode_always_returns_exactly_length_bytes() {
         for p in &PARAMETERS {
