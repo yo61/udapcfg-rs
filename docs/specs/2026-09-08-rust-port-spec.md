@@ -148,6 +148,46 @@ boundary is where it belongs, and the compromise is unnecessary.
 *This is the one place we knowingly diverge from the Go's internal structure.*
 It changes no observable behaviour.
 
+### ADR-6: device-supplied values are bytes, not `String`
+
+**Added 2026-09-09, closing [#3](https://github.com/yo61/udapcfg-rs/issues/3).**
+Go's `string` is an arbitrary byte container; Rust's `String` enforces UTF-8.
+`Device.name`/`firmware`/`hardware_rev`/`state` (discovery TLVs, `client.rs`)
+and the values in `getdata::parse_response`'s map (NVRAM `GetData` values,
+`getdata.rs`) are copied straight from a device with no encoding guarantee —
+802.11 does not require an SSID to be valid UTF-8, and `device_name` is
+user-set. Decoding either with `String::from_utf8_lossy` silently substitutes
+U+FFFD for invalid bytes, and `getdata::parse_response`'s output round-trips
+through `set --config`, so the substitution would be written back to a
+device's NVRAM as a silent, destructive change.
+
+**Decision:** those fields are `Vec<u8>`. Rendering to text (logging, and any
+future `info`/`discover --info` display at M6) happens lossily only at the
+display boundary, never in storage. `Device.ip`, `.model`, and `.uuid` stay
+`String` because they are never raw device bytes: `ip` is formatted by us
+from a `SocketAddr`, `uuid` is hex-encoded (hence already ASCII) before
+storage, and `model` is synthesized text from a fixed product-name table plus
+a formatted fallback (`combine_model`, `device.rs`) — its *inputs*
+(`device_type`, `device_id`) are raw bytes and are converted lossily for the
+table lookup and fallback formatting only, which is safe because that
+conversion is one-way and never written back to a device.
+
+`Parameter::encode` (`parameters.rs`) — the wire-encoding path M4's `set` will
+call — was changed from `&str` to `&[u8]` at the same time, ahead of M4, since
+nothing outside its own tests called it yet and widening later (after M4
+lands) would have rippled through every caller instead of none. Numeric and
+IPv4 widths still require valid UTF-8 text of a parseable value and reject
+anything else (`EncodeError`) — a numeric NVRAM field cannot faithfully
+represent arbitrary bytes, so `set` must refuse rather than guess. The
+catch-all string width copies bytes through unvalidated, so a value read
+byte-exact via `parse_response` can be written back byte-exact.
+
+*Open question for M4/M6, not resolved here:* `set --config FILE`'s INI
+round-trip contract (see "INI parsing (M6)" below) is inherently textual —
+`rust-ini` reads a file into `String`. A `wireless_SSID` containing bytes that
+are not valid UTF-8 cannot pass through an INI file as `String` without an
+encoding scheme neither go-udap nor this spec defines. Tracked as OQ-8.
+
 ## Crate layout
 
 ```
@@ -525,6 +565,18 @@ replicate: `prek` hooks, commitlint, release-please, Dependabot, the Taskfile.
 `release-please` supports Rust. Deferring all of it until M5 is defensible for a
 learning project. *Blocks nothing.* **Recommendation:** add `prek` + `cargo fmt`
 / `clippy` hooks at M1; defer the rest.
+
+**OQ-8 — non-UTF-8 values through the INI round-trip.** ADR-6 makes
+`Device`/`getdata::parse_response` values `Vec<u8>` so a non-UTF-8 NVRAM value
+(a `wireless_SSID`, say) survives a `read` → `set --config` round-trip
+byte-exact in memory. But "INI parsing (M6)" above commits to `rust-ini`,
+which reads the config file into `String` — so the byte-exactness ADR-6 buys
+in memory does not yet reach the on-disk `.conf` file. Whether go-udap's own
+`.conf` files ever carry non-UTF-8 bytes for `wireless_SSID` in practice is
+unverified. *Blocks M4/M6.* **Resolve by:** checking a real go-udap `read`
+capture with a non-ASCII SSID before M4's config-file layer is built; if it
+occurs, decide then whether to accept a delta (INI values are UTF-8-only) or
+find an encoding for the exceptional bytes.
 
 ## Rejected alternatives
 

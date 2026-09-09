@@ -189,7 +189,14 @@ impl Client {
             return;
         }
         let device = parse_discovery_response(payload, src, &packet);
-        info!(mac = %device.mac, name = %device.name, ip = %device.ip, "found device");
+        // `device.name` is raw device bytes, not guaranteed valid UTF-8
+        // (see `Device`'s docs) — render lossily for this log line only.
+        info!(
+            mac = %device.mac,
+            name = %String::from_utf8_lossy(&device.name),
+            ip = %device.ip,
+            "found device"
+        );
         self.devices.insert(device.mac, device);
     }
 }
@@ -296,18 +303,17 @@ fn parse_discovery_response(payload: &[u8], src: &str, packet: &Packet) -> Devic
         ip: src.to_owned(),
         ..Device::default()
     };
-    let mut device_type = String::new();
-    let mut device_id = String::new();
+    let mut device_type: Vec<u8> = Vec::new();
+    let mut device_id: Vec<u8> = Vec::new();
 
     for entry in tlv::decode(payload) {
-        let text = String::from_utf8_lossy(entry.value).into_owned();
         match entry.tag {
-            tlv_code::DEVICE_NAME => device.name = text,
-            tlv_code::DEVICE_TYPE => device_type = text,
-            tlv_code::FIRMWARE_REV => device.firmware = text,
-            tlv_code::DEVICE_ID => device_id = text,
-            tlv_code::DEVICE_STATUS => device.state = text,
-            tlv_code::HARDWARE_REV => device.hardware_rev = text,
+            tlv_code::DEVICE_NAME => device.name = entry.value.to_vec(),
+            tlv_code::DEVICE_TYPE => device_type = entry.value.to_vec(),
+            tlv_code::FIRMWARE_REV => device.firmware = entry.value.to_vec(),
+            tlv_code::DEVICE_ID => device_id = entry.value.to_vec(),
+            tlv_code::DEVICE_STATUS => device.state = entry.value.to_vec(),
+            tlv_code::HARDWARE_REV => device.hardware_rev = entry.value.to_vec(),
             tlv_code::UUID => device.uuid = crate::hex::encode(entry.value),
             tag => debug!(
                 tag = format!("0x{tag:02x}"),
@@ -319,7 +325,7 @@ fn parse_discovery_response(payload: &[u8], src: &str, packet: &Packet) -> Devic
 
     device.model = combine_model(&device_type, &device_id);
     if device.name.is_empty() {
-        "Squeezebox Device".clone_into(&mut device.name);
+        device.name = b"Squeezebox Device".to_vec();
     }
     device
 }
@@ -407,6 +413,40 @@ mod tests {
         assert!(
             client.devices().is_empty(),
             "our own broadcast was recorded as a device"
+        );
+    }
+
+    /// `wireless_SSID`-shaped sharp case, but exercised via the discovery
+    /// path (`device_name`, TLV 0x02): 802.11 does not require SSIDs — or
+    /// any device-supplied string — to be valid UTF-8. Before this fix,
+    /// `String::from_utf8_lossy` silently substituted U+FFFD for the
+    /// invalid byte; `Device::name` being `Vec<u8>` means the raw bytes
+    /// now survive untouched.
+    #[test]
+    fn non_utf8_device_name_survives_byte_exact() {
+        let non_utf8_name: &[u8] = &[0xff, b'X', 0x00, 0xfe];
+        let mut payload = Vec::new();
+        tlv::encode_into(tlv_code::DEVICE_NAME, non_utf8_name, &mut payload);
+
+        let packet = Packet {
+            dst_broadcast: 0,
+            dst_type: ADDR_TYPE_ETH,
+            dst_address: Mac::ZERO,
+            src_broadcast: 0,
+            src_type: ADDR_TYPE_ETH,
+            src_address: Mac::ZERO,
+            sequence: 1,
+            udap_type: UDAP_TYPE_UCP,
+            ucp_flags: 0,
+            uap_class: UAP_CLASS_UCP,
+            ucp_method: method::ADV_DISC,
+        };
+
+        let device = parse_discovery_response(&payload, "192.0.2.1", &packet);
+
+        assert_eq!(
+            device.name, non_utf8_name,
+            "non-UTF-8 device_name bytes must survive untouched, not become U+FFFD"
         );
     }
 }
