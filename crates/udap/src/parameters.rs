@@ -255,39 +255,61 @@ impl Parameter {
     /// Encodes `value` to exactly `self.length` bytes.
     ///
     /// Width drives the encoding: 1 is `u8`, 2 is big-endian `u16`, 4 is
-    /// IPv4, anything else is zero-padded UTF-8 (truncated if too long).
+    /// IPv4, anything else is zero-padded raw bytes (truncated if too
+    /// long — no UTF-8 validation). `value` is `&[u8]`, not `&str`: the
+    /// string-width branch is the NVRAM write-back path (`wireless_SSID`
+    /// and friends are arbitrary octets, not guaranteed text), so taking
+    /// bytes here lets a caller holding a [`crate::getdata::parse_response`]
+    /// value write it back byte-exact instead of round-tripping through a
+    /// lossy `String` first. The numeric/IPv4 branches still require the
+    /// bytes to be valid UTF-8 text of a parseable number or address —
+    /// anything else is rejected via [`EncodeError`], per the "reject
+    /// rather than corrupt" rule for values `set` cannot faithfully write.
     ///
     /// # Errors
     /// [`EncodeError`] if the value does not parse for this width.
-    pub fn encode(&self, value: &str) -> Result<Vec<u8>, EncodeError> {
+    pub fn encode(&self, value: &[u8]) -> Result<Vec<u8>, EncodeError> {
         match self.length {
             1 => {
-                let n: u8 = value.parse().map_err(|_| EncodeError::NotU8 {
-                    value: value.to_owned(),
+                let n: u8 = parse_ascii(value).ok_or_else(|| EncodeError::NotU8 {
+                    value: lossy(value),
                 })?;
                 Ok(vec![n])
             }
             2 => {
-                let n: u16 = value.parse().map_err(|_| EncodeError::NotU16 {
-                    value: value.to_owned(),
+                let n: u16 = parse_ascii(value).ok_or_else(|| EncodeError::NotU16 {
+                    value: lossy(value),
                 })?;
                 Ok(n.to_be_bytes().to_vec())
             }
             4 => {
-                let ip: Ipv4Addr = value.parse().map_err(|_| EncodeError::NotIpv4 {
-                    value: value.to_owned(),
+                let ip: Ipv4Addr = parse_ascii(value).ok_or_else(|| EncodeError::NotIpv4 {
+                    value: lossy(value),
                 })?;
                 Ok(ip.octets().to_vec())
             }
             width => {
                 let mut out = vec![0u8; usize::from(width)];
-                let src = value.as_bytes();
-                let take = src.len().min(out.len());
-                out[..take].copy_from_slice(&src[..take]);
+                let take = value.len().min(out.len());
+                out[..take].copy_from_slice(&value[..take]);
                 Ok(out)
             }
         }
     }
+}
+
+/// Parses `value` as UTF-8 text and then as `T`. Used for the numeric and
+/// IPv4 widths, which are always ASCII on the wire; anything that is not
+/// valid UTF-8, or does not parse, is rejected rather than guessed at.
+fn parse_ascii<T: std::str::FromStr>(value: &[u8]) -> Option<T> {
+    std::str::from_utf8(value).ok()?.parse().ok()
+}
+
+/// Renders `value` for an error message only. Lossy conversion is safe
+/// here: this text is never written back to a device, it only appears in
+/// a diagnostic asking the caller for a valid value.
+fn lossy(value: &[u8]) -> String {
+    String::from_utf8_lossy(value).into_owned()
 }
 
 /// Looks up a parameter by canonical name, resolving aliases.
@@ -393,23 +415,23 @@ mod tests {
     #[test]
     fn encodes_one_byte_values() {
         let p = by_name("lan_ip_mode").unwrap();
-        assert_eq!(p.encode("1").unwrap(), vec![1]);
-        assert!(p.encode("256").is_err());
-        assert!(p.encode("nope").is_err());
+        assert_eq!(p.encode(b"1").unwrap(), vec![1]);
+        assert!(p.encode(b"256").is_err());
+        assert!(p.encode(b"nope").is_err());
     }
 
     #[test]
     fn encodes_ipv4_values_as_four_bytes() {
         let p = by_name("lan_network_address").unwrap();
-        assert_eq!(p.encode("192.168.1.50").unwrap(), vec![192, 168, 1, 50]);
-        assert!(p.encode("not-an-ip").is_err());
-        assert!(p.encode("::1").is_err(), "IPv6 must be rejected");
+        assert_eq!(p.encode(b"192.168.1.50").unwrap(), vec![192, 168, 1, 50]);
+        assert!(p.encode(b"not-an-ip").is_err());
+        assert!(p.encode(b"::1").is_err(), "IPv6 must be rejected");
     }
 
     #[test]
     fn encodes_strings_zero_padded_to_length() {
         let p = by_name("hostname").unwrap();
-        let out = p.encode("bedroom").unwrap();
+        let out = p.encode(b"bedroom").unwrap();
         assert_eq!(out.len(), 33);
         assert_eq!(&out[..7], b"bedroom");
         assert!(
@@ -421,10 +443,10 @@ mod tests {
     #[test]
     fn encode_always_returns_exactly_length_bytes() {
         for p in &PARAMETERS {
-            let sample = match p.length {
-                1 | 2 => "1",
-                4 => "192.168.1.1",
-                _ => "x",
+            let sample: &[u8] = match p.length {
+                1 | 2 => b"1",
+                4 => b"192.168.1.1",
+                _ => b"x",
             };
             let out = p.encode(sample).unwrap();
             assert_eq!(
@@ -434,5 +456,38 @@ mod tests {
                 p.name
             );
         }
+    }
+
+    /// A numeric width cannot faithfully represent arbitrary bytes, so a
+    /// non-UTF-8 value must be rejected rather than silently coerced —
+    /// the "reject, don't corrupt" half of the fidelity fix.
+    #[test]
+    fn non_utf8_bytes_are_rejected_for_numeric_and_ipv4_widths() {
+        let non_utf8: &[u8] = &[0xff, 0xfe];
+        assert!(by_name("lan_ip_mode").unwrap().encode(non_utf8).is_err());
+        assert!(
+            by_name("lan_network_address")
+                .unwrap()
+                .encode(non_utf8)
+                .is_err()
+        );
+    }
+
+    /// The sharp case from the issue: `wireless_SSID` is arbitrary
+    /// 802.11 octets, not guaranteed UTF-8. The string-width branch must
+    /// copy raw bytes through with no UTF-8 validation, so a value read
+    /// byte-exact via `getdata::parse_response` can be written back
+    /// byte-exact too.
+    #[test]
+    fn encodes_non_utf8_bytes_into_string_widths_unchanged() {
+        let p = by_name("wireless_SSID").unwrap();
+        let ssid: &[u8] = &[0xff, 0xfe, b'X', 0x01];
+        let out = p.encode(ssid).unwrap();
+        assert_eq!(out.len(), 33);
+        assert_eq!(&out[..ssid.len()], ssid);
+        assert!(
+            out[ssid.len()..].iter().all(|&b| b == 0),
+            "remainder must be zero-padded"
+        );
     }
 }

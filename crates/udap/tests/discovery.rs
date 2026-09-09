@@ -52,10 +52,10 @@ async fn populates_device_metadata_from_tlvs() {
 
     let devices = client.devices();
     let d = devices.first().expect("one device");
-    assert_eq!(d.name, "Mock SBR 1");
-    assert_eq!(d.firmware, "77");
-    assert_eq!(d.hardware_rev, "0005");
-    assert_eq!(d.state, "wait_slimserver");
+    assert_eq!(d.name, b"Mock SBR 1");
+    assert_eq!(d.firmware, b"77");
+    assert_eq!(d.hardware_rev, b"0005");
+    assert_eq!(d.state, b"wait_slimserver");
     // device_id "07" maps to the product name, not the raw device_type.
     assert_eq!(d.model, "Squeezebox Receiver");
 }
