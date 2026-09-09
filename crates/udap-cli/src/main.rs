@@ -3,10 +3,16 @@
 use clap::Parser;
 use std::io::Write;
 use std::process::ExitCode;
-use udap_cli::{Cli, ClientFactory, run};
+use udap_cli::{Cli, ClientFactory, build_client, run};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    // clap's own parse-failure exit codes already match go-udap: 2 for a
+    // usage error (cobra/pflag's own parse errors are never wrapped in
+    // go-udap's ExitError, so they fall through to ExitCode's default of
+    // 2 -- see cli.go's ExitCode/PersistentPreRunE), 0 for --help/--version.
+    // No custom mapping needed: `Cli::parse()` calls `clap::Error::exit()`
+    // internally, which already reproduces that split.
     let cli = Cli::parse();
 
     tracing_subscriber::fmt()
@@ -19,12 +25,9 @@ async fn main() -> ExitCode {
         .init();
 
     let retries = cli.retries;
-    let factory: ClientFactory = Box::new(move || {
-        // M3 replaces this with the real UDP transport.
-        Err(anyhow::anyhow!(
-            "no transport available yet: the UDP transport lands in M3 \
-             (retries={retries} will apply then)"
-        ))
+    let all_interfaces = cli.all_interfaces;
+    let factory: ClientFactory = Box::new(move |resolved_interface| {
+        build_client(resolved_interface, all_interfaces, retries, udap::PORT)
     });
 
     let mut stdout = std::io::stdout();

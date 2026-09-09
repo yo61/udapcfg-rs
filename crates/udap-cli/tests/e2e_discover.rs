@@ -7,7 +7,7 @@ use udap_cli::{Cli, Command, run};
 /// `allow-unwrap-in-tests` applies) decode to `String` themselves.
 async fn run_cli(device_count: usize, timeout_ms: i64) -> (Vec<u8>, Vec<u8>, i32) {
     let network = Arc::new(mocksbr::Network::with_auto_devices(device_count));
-    let factory = Box::new(move || {
+    let factory = Box::new(move |_resolved_interface: Option<&udap::NetInterface>| {
         Ok(udap::Client::new(Box::new(mocksbr::MockTransport::new(
             Arc::clone(&network),
         ))))
@@ -16,6 +16,8 @@ async fn run_cli(device_count: usize, timeout_ms: i64) -> (Vec<u8>, Vec<u8>, i32
         timeout: GoDuration::from(timeout_ms * 1_000_000),
         verbose: false,
         retries: 0,
+        bind_interface: None,
+        all_interfaces: false,
         command: Command::Discover,
     };
     let mut out = Vec::new();
@@ -59,4 +61,66 @@ async fn results_go_to_stdout_not_stderr() {
     let stderr = String::from_utf8(stderr).unwrap();
     assert!(stdout.contains("00:04:20:00:00:01"));
     assert!(stderr.is_empty());
+}
+
+use clap::Parser;
+
+#[test]
+fn bind_interface_and_all_interfaces_are_mutually_exclusive() {
+    let err = Cli::try_parse_from([
+        "udapcfg",
+        "--bind-interface",
+        "en0",
+        "--all-interfaces",
+        "discover",
+    ])
+    .expect_err("the two flags must conflict");
+    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+}
+
+#[test]
+fn retries_defaults_to_zero_and_parses() {
+    let cli = Cli::try_parse_from(["udapcfg", "discover"]).expect("parse");
+    assert_eq!(cli.retries, 0);
+    let cli = Cli::try_parse_from(["udapcfg", "--retries", "2", "discover"]).expect("parse");
+    assert_eq!(cli.retries, 2);
+}
+
+#[test]
+fn negative_retries_is_rejected() {
+    assert!(Cli::try_parse_from(["udapcfg", "--retries", "-1", "discover"]).is_err());
+}
+
+#[tokio::test]
+async fn unknown_bind_interface_is_a_usage_error() {
+    let factory: udap_cli::ClientFactory =
+        Box::new(|_resolved_interface| Err(anyhow::anyhow!("factory must not be reached")));
+    let cli = Cli {
+        timeout: GoDuration::from(50_000_000),
+        verbose: false,
+        retries: 0,
+        bind_interface: Some("definitely-not-an-interface0".to_owned()),
+        all_interfaces: false,
+        command: Command::Discover,
+    };
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let e = run(cli, factory, &mut out, &mut err)
+        .await
+        .expect_err("an unusable interface is an error");
+
+    // go-udap treats this as a usage error, not an operation failure
+    // (cli/cli.go:124 returns ExitError{Code: 1}).
+    assert_eq!(e.code, 1, "unusable interface must exit 1, not 2");
+    // Exact string, not just a substring: this is go-udap's cli.go:124
+    // wording byte-for-byte, and udap-cli's own message and
+    // udap::ClientError::NoSuchInterface's Display both draw the "is not
+    // usable (...)" clause from the same udap::interfaces::NOT_USABLE_REASON
+    // constant, so an exact match here is what would catch either side
+    // silently drifting from the other or from go-udap.
+    assert_eq!(
+        e.source.to_string(),
+        "--bind-interface: \"definitely-not-an-interface0\" is not usable (must be up, broadcast-capable, with an IPv4 address)"
+    );
+    assert!(out.is_empty(), "stdout stays clean on a usage error");
 }

@@ -32,6 +32,19 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "N", default_value_t = 0)]
     pub retries: usize,
 
+    /// Bind discovery to one network interface
+    #[arg(
+        long,
+        global = true,
+        value_name = "NAME",
+        conflicts_with = "all_interfaces"
+    )]
+    pub bind_interface: Option<String>,
+
+    /// Broadcast on every usable interface (fan-out)
+    #[arg(long, global = true)]
+    pub all_interfaces: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -49,6 +62,18 @@ pub enum Command {
                             address) can hear them."
     )]
     Discover,
+
+    /// List network interfaces usable for discovery
+    #[command(
+        long_about = "Print a table of local network interfaces that satisfy the filter\n\
+                            udapcfg applies to discovery: up, broadcast-capable, has an IPv4\n\
+                            address, and not a loopback.\n\n\
+                            Useful for picking a value for the global --bind-interface flag on\n\
+                            multi-homed hosts. The Broadcast column is informational only — UDAP\n\
+                            discovery always targets the limited broadcast 255.255.255.255 so\n\
+                            unconfigured devices can hear it."
+    )]
+    Interfaces,
 }
 
 /// Parses `--timeout` with Go's `time.ParseDuration` grammar.

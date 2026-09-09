@@ -47,7 +47,7 @@ there.
 | Binary name | **`udapcfg`**, not `go-udap` — the two must be installable side by side. See the exception below |
 | Subcommands | `discover`, `info`, `read`, `get`, `set`, `reboot`, `getip`, `interfaces` |
 | Global flags | `--timeout`, `--retries`, `--verbose/-v`, `--version`, `--help/-h`, `--bind-interface`, `--all-interfaces`; accepted before *or* after the subcommand |
-| Exit codes | 0 success, 1 usage error, 2 operation failure |
+| Exit codes | 0 success, 2 for everything that fails. **1 is not a general usage-error code** — measured against go-udap, it is returned only for an unusable `--bind-interface` name (`cli/cli.go:124` wraps that one in `ExitError{Code: 1}`). Cobra does not wrap its own parse errors, so unknown flags, bad durations, unknown subcommands and mutually-exclusive flags all exit 2. `--help`/`--version` exit 0 |
 | Streams | Results on stdout; logs, warnings, progress bar on stderr |
 | Output text | Byte-identical, including the `-` placeholder for absent network values and the fixed-column `interfaces` table |
 | Retries | `--retries N` = N *re-transmissions* beyond the initial send, no inter-send delay |
@@ -183,7 +183,7 @@ we should not casually exceed that.
 | `tokio-util` | 0.7 | `context.Context` cancellation | `CancellationToken` (ADR-2). No features needed — `tokio_util::sync` is not feature-gated |
 | `async-trait` | 0.1 | Go interface methods | `Transport` needs `dyn` dispatch, and AFIT traits are still not `dyn`-compatible in Rust 1.98. Drop it if that lands |
 | `clap` (derive, wrap_help) | 4.6 | cobra + pflag | Subcommands, help, and the derive/builder mix the generated flags need |
-| `indicatif` | 0.18 | `cli/progress.go`, `cli/stderr.go` | Progress bar. Replaces the ticker, the erase-line dance, and the TTY check — see [Progress bar](#progress-bar) |
+| `indicatif` *(M6, not yet declared)* | 0.18 | `cli/progress.go`, `cli/stderr.go` | Progress bar. Replaces the ticker, the erase-line dance, and the TTY check — see [Progress bar](#progress-bar) |
 | `netdev` (no default features) | 0.46 | `net.Interfaces()` | Interface enumeration with real `IFF_*` flags — see [OQ-1](#open-questions) |
 | `socket2` (all) | 0.6 | `syscall.Setsockopt*`, `net.ListenConfig` | `SO_BROADCAST`, `SO_REUSEPORT`, interface binding. `all` feature gates `bind_device_by_index_v4`. See [socket construction](#socket-construction) |
 | `thiserror` | 2.0 | `fmt.Errorf` in `udap` | Library error enums |
@@ -192,11 +192,39 @@ we should not casually exceed that.
 | `tracing-subscriber` | 0.3 | — | `fmt` layer with a custom `MakeWriter` for stderr sync |
 | `clap_mangen` | 0.3 | `cmd/docs` | Man pages from the clap tree (build/xtask only) |
 | `clap_complete` | 4.6 | `cli/completion.go` | Shell completions (build/xtask only) |
-| `insta` | 1.48 | golden string comparisons | dev-only |
+| `insta` *(not adopted — see testing strategy)* | 1.48 | golden string comparisons | dev-only |
 | `serial_test` | 4.0 | Go's per-process test isolation | dev-only; Rust runs tests as threads in one process |
 
 Versions are current stable as of 2026-09-08 (verified against the crates.io
 API). Pin exact versions per the project standard.
+
+### INI parsing (M6)
+
+`set --config FILE` consumes an INI file, and the format is a **round-trip
+contract**: `read` emits sorted `key=value` lines and `set --config` consumes
+exactly that output. go-udap documents this, and ships example `.conf` files
+users have on disk. The format therefore cannot change — not to TOML, not to
+YAML — because `read`'s output is itself a fidelity-contract surface, and a
+`backup.conf` produced by go-udap must work against udapcfg.
+
+**Use `rust-ini`** for the tokenizing. It is the maintained, widely-used INI
+crate, and this is genuinely INI: `key=value`, `#` and `;` comments, blank
+lines ignored, whitespace trimmed, no sections.
+
+The validation layer stays ours, because it needs the parameter table and
+cannot come from a config crate:
+
+- **line numbers in errors** — `line 4: unknown parameter "foo"`
+- **alias collision detection** — `slimserver_address` and
+  `squeezecenter_address` are different keys that resolve to the same NVRAM
+  offset, so go-udap rejects a file setting both rather than letting
+  last-write-win corrupt a byte range. No INI parser can see this; it needs
+  `ParameterByName`.
+- **per-key validation** against `udap::validation`
+
+If `rust-ini` cannot surface line numbers, keep them by locating the offending
+key in the source text after parsing, rather than abandoning the crate — the
+error text is a fidelity surface too.
 
 **Explicitly not taken:** `serde` (ADR-4), `deku`/`binrw` (one 27-byte struct
 does not justify a proc macro), `hex` (the Go hand-rolls nibble decoding for the
@@ -318,7 +346,20 @@ behaviour that would otherwise have to be rediscovered.
 - **Wire fidelity:** golden-byte tests against go-udap's committed captures in
   `mocksbr/testdata/captures/`. Copy those fixtures in verbatim.
 - **e2e:** `mocksbr` in-process, driving `run()` with captured stdout/stderr, via
-  `insta` snapshots.
+  inline `assert_eq!` on captured strings.
+
+  **Amended 2026-09-09.** This originally specified `insta` snapshots. The e2e
+  tests use inline assertions instead, and `insta` was removed rather than left
+  declared-and-unused. Revisit at M6, when `--info`, `read`, `get` and the
+  `interfaces` table make expected output multi-line and awkward as string
+  literals — that is the case snapshots handle better, and the point to adopt
+  them if ever.
+
+  `rstest` was likewise removed; the spec had named it only as an option for
+  table-driven cases, and nothing uses it. `indicatif` is genuinely wanted for
+  M6's progress bar but is not declared until the milestone that needs it —
+  an undeclared dependency costs nothing, a declared unused one costs every
+  build.
 - **Property:** `proptest` for the TLV codec and `parseGetDataResponse` — both
   are parsers over adversarial input and both have hand-rolled bounds checks
   worth fuzzing. (Adds a dev-dependency; justified by the project standard's
@@ -373,6 +414,7 @@ Deviations we are taking knowingly. Anything not listed here is a bug.
 | `devices` keyed by `Mac` rather than its string form (ADR-5) | None observable |
 | No early cancellation, only deadlines (ADR-2) | None observable |
 | Man pages and completions generated by clap rather than cobra | Wording may differ slightly; snapshot them and review |
+| `udap::interfaces::enumerate()` cannot report an enumeration failure; go-udap's `EnumerateInterfaces` can (`net.Interfaces()` returns `([]Interface, error)`) | `netdev::get_interfaces()` (default features off, per OQ-1) returns a bare `Vec`, not a `Result` — there is nothing fallible to propagate. If OS-level enumeration fails or returns partial data, `udapcfg` sees an empty or short interface list, indistinguishable from "no usable interfaces" (already handled: `interfaces` prints "no usable interfaces found" and exits 0; `--bind-interface NAME` exits 1, "not usable"). go-udap would instead print `enumerate interfaces: ...` and exit 2. No genuinely fallible enumeration API exists in `netdev` outside the `gateway` feature (deliberately not enabled — see OQ-1), so this cannot be closed without either accepting the delta or taking on the `gateway` feature's Objective-C bindings on macOS |
 
 ## Known warts carried forward
 
@@ -427,11 +469,21 @@ broadcast filter to be inferred from whether a broadcast address happened to get
 populated — an undocumented internal detail to hang the VPN filter on. `netdev`
 is also the most actively maintained candidate (released 2026-09-04).
 
-Take it as `netdev = { version = "0.46", default-features = false }`. The
-default features pull in `gateway` detection and
-`apple-system-configuration-extra`, which drags Objective-C bindings
-(`objc2-system-configuration`) onto macOS. Disabled, the tree is `mac-addr` +
-`ipnet` + `libc`, plus netlink crates on Linux only.
+Take it as `netdev = { version = "0.46", default-features = false }`, which
+skips `gateway` detection and `android-extra`.
+
+**Corrected 2026-09-08 (M3 Task 1):** an earlier draft of this section claimed
+the flag also keeps Objective-C bindings off macOS. It does not. netdev declares
+`objc2`, `objc2-core-foundation`, `objc2-system-configuration`, `objc2-foundation`
+and `plist` under unconditional `[target.'cfg(target_os = "macos")'.dependencies]`
+sections; `apple-system-configuration-extra` only toggles sub-features *within*
+`objc2-system-configuration`, so no feature setting avoids the crates themselves.
+A macOS build pulls the full ObjC/SystemConfiguration/plist stack — verified by
+`cargo tree -p udap -e normal` and by reading netdev-0.46.2's own `Cargo.toml`.
+
+That does not change the choice: `netdev` remains the only candidate exposing
+the real `IFF_*` flags, which is what the VPN filter depends on. But the weight
+is real and a security review should know it ships.
 
 *Verify at M3:* that `flags` is still populated with default features off.
 Flags come from `getifaddrs`, so it should be, but confirm rather than assume.

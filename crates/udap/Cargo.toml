@@ -10,6 +10,10 @@ description = "Squeezebox UDAP protocol client"
 
 [dependencies]
 async-trait.workspace = true
+futures-util.workspace = true
+ipnet.workspace = true
+netdev.workspace = true
+socket2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -18,7 +22,6 @@ tracing.workspace = true
 [dev-dependencies]
 mocksbr = { path = "../mocksbr" }
 proptest.workspace = true
-rstest.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
 
 [lints]

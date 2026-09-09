@@ -47,7 +47,7 @@ pub fn parse_response(data: &[u8]) -> Result<BTreeMap<String, String>, GetDataEr
                 out.insert(p.name.to_owned(), format_value(value));
             }
             None => {
-                out.insert(format!("offset_{offset}"), hex_encode(value));
+                out.insert(format!("offset_{offset}"), crate::hex::encode(value));
             }
         }
     }
@@ -66,16 +66,6 @@ fn format_value(value: &[u8]) -> String {
             String::from_utf8_lossy(&value[..end]).into_owned()
         }
     }
-}
-
-fn hex_encode(value: &[u8]) -> String {
-    let mut s = String::with_capacity(value.len() * 2);
-    for byte in value {
-        use std::fmt::Write;
-        // Writing to a String is infallible.
-        let _ = write!(s, "{byte:02x}");
-    }
-    s
 }
 
 #[cfg(test)]

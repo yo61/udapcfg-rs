@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use udap::{Client, ClientError};
@@ -99,4 +100,51 @@ async fn rediscovery_does_not_duplicate_devices() {
         .expect("discovery must not error on timeout");
 
     assert_eq!(client.devices().len(), 2);
+}
+
+/// A transport that counts sends and never replies.
+///
+/// The counter is an `Arc<AtomicUsize>` the test also holds, so the
+/// transport itself can be a plain `Box<dyn Transport>` — which is what
+/// `Client::new` takes. Boxing an `Arc<dyn Transport>` would give
+/// `Box<Arc<dyn Transport>>`, an unrelated type (E0308).
+struct CountingTransport {
+    sends: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl udap::transport::Transport for CountingTransport {
+    async fn send(&self, _packet: &[u8]) -> Result<(), udap::transport::TransportError> {
+        self.sends.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    async fn recv(
+        &self,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<(Vec<u8>, String), udap::transport::TransportError> {
+        cancel.cancelled().await;
+        Err(udap::transport::TransportError::Cancelled)
+    }
+    async fn close(&self) -> Result<(), udap::transport::TransportError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn retries_n_produces_n_plus_one_sends() {
+    let sends = Arc::new(AtomicUsize::new(0));
+    let mut client = Client::new(Box::new(CountingTransport {
+        sends: Arc::clone(&sends),
+    }));
+    client.set_retries(2);
+
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let _ = client.discover(&cancel).await;
+
+    assert_eq!(
+        sends.load(Ordering::SeqCst),
+        3,
+        "2 retries means 3 total sends"
+    );
 }

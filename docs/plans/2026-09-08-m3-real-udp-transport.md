@@ -80,7 +80,7 @@ In `crates/udap/Cargo.toml`, under `[dependencies]`:
 netdev.workspace = true
 ```
 
-`netdev` is already declared in the workspace root as `{ version = "0.46", default-features = false }`. Defaults would pull `gateway` detection and `apple-system-configuration-extra`, which drags Objective-C bindings onto macOS.
+`netdev` is already declared in the workspace root as `{ version = "0.46", default-features = false }`, which skips `gateway` detection and `android-extra`. Note it does **not** avoid the Objective-C bindings on macOS — those are unconditional per-target dependencies of netdev, not feature-gated. See the spec's corrected OQ-1.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -624,7 +624,7 @@ Wires the transport into `Client` and the CLI. **Closes issue #2 (`--retries` un
   - `Cli` gains `bind_interface: Option<String>` and `all_interfaces: bool`
 
 **Behaviour:**
-- `--bind-interface` and `--all-interfaces` are **mutually exclusive**; combining them exits **1** (usage error), not 2.
+- `--bind-interface` and `--all-interfaces` are **mutually exclusive**; combining them exits **2**, like every other parse failure. Measured against go-udap: cobra does not wrap its own parse errors in `ExitError`, so they fall to the default 2.
 - An unknown interface name exits **1** with go-udap's wording: `--bind-interface: "NAME" is not usable (must be up, broadcast-capable, with an IPv4 address)`.
 - Validation happens **before** the subcommand runs, matching go-udap's `PersistentPreRunE`.
 - `set_retries` is called by the factory. `--retries N` means N *re-transmissions* beyond the initial send.
@@ -880,22 +880,24 @@ Note the two codes: an unusable *name* is a usage error (1); a *failure to enume
 
 Keeping this in `run()` rather than `main()` is deliberate — it is the injected-writer seam the rest of the CLI uses, so the exit code and the message are both testable. A version in `main()` calling `std::io::stderr()` directly would be neither.
 
-- [ ] **Step 6c: Map clap's parse failures to go-udap's codes**
+- [ ] **Step 6c: Confirm parse failures exit 2, and help/version exit 0**
 
-`clap`'s `conflicts_with` produces exit code 2 by default, but go-udap exits **1** on usage errors. In `main.rs`, map clap's parse failure explicitly:
+**Corrected 2026-09-08 (M3 Task 3).** An earlier draft mapped every clap parse failure to exit 1, on the assumption that 1 is go-udap's usage-error code. Measured against the built binary, it is not:
 
-```rust
-    let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
-        Err(e) => {
-            // clap writes its own message; go-udap uses exit 1 for usage errors.
-            let _ = e.print();
-            return ExitCode::from(if e.use_stderr() { 1 } else { 0 });
-        }
-    };
-```
+| case | go-udap |
+| --- | --- |
+| mutually exclusive flags | 2 |
+| unknown `--bind-interface` name | **1** |
+| unknown flag | 2 |
+| bad `--timeout` duration | 2 |
+| unknown subcommand | 2 |
+| `--help` | 0 |
 
-`e.use_stderr()` is false for `--help`/`--version`, which must exit **0**.
+Exit 1 comes from exactly one place — `cli/cli.go:124`, where `PersistentPreRunE` wraps the unusable-interface error in `ExitError{Code: 1}`. Cobra does not wrap its own parse errors, so everything else takes the default 2.
+
+So: do **not** special-case clap's failures. Verify what `Cli::parse()` already does on failure and keep whatever yields 2. Add only the minimum needed to keep `--help` and `--version` at 0 (clap's `ErrorKind::DisplayHelp` / `DisplayVersion`).
+
+The exit-1 case is Step 6b's `run()` validation, which is unaffected.
 
 - [ ] **Step 7: Run, then verify exit codes by hand**
 
