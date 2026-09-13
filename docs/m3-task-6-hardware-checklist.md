@@ -155,3 +155,89 @@ git commit -S -m "docs(spec): resolve OQ-1 and OQ-2 against real hardware"
 - An unexplained nextest `leaky` flag, seen twice on unrelated code, never reproduced
   (11 runs in the final review). The final review falsified the socket-leak theory:
   the M0–M2 sighting was on a synchronous decoder with no sockets or tasks.
+
+---
+
+## Results — 2026-09-13
+
+Run against a real Squeezebox in setup mode, MAC `00:04:20:16:17:18`
+(`00:04:20` is the Slim Devices OUI; UDAP reports `ip=0.0.0.0`, confirming
+setup mode). Dev host: macOS 25.6.0, `aarch64-apple-darwin`. Reference:
+go-udap built from `7cce675`.
+
+**This host no longer has one usable interface.** It has two — `en0`
+(192.168.1.243) and `en8` (192.168.20.169) — which is what made step 8
+possible. The preamble above, written when it had one, is stale.
+
+| Step | Result |
+|------|--------|
+| 1. Discovery vs go-udap | **Pass.** Identical MAC, exit 0, 6/6 runs. |
+| 2. Loopback filter on a real socket | **Pass.** `skipping our own looped-back request src=192.168.20.169:17784`; no `00:00:00:00:00:00` phantom. |
+| 3. `--bind-interface` both ways | **Partial.** Positive verified on both NICs; egress genuinely pinned (`IP_BOUND_IF` changes the source address per interface). Negative case not testable — see below. |
+| 4. `--all-interfaces` exactly once | **Pass.** 6/6, one MAC per run. |
+| 5. OQ-2, `SO_BINDTOIFINDEX` privileges | **Open.** Needs Linux. |
+| 6. Linux kernel floor | **Open.** Needs Linux. |
+| 7. Windows arm | **Open.** PR #11 adds a CI matrix that compiles and lints it; nothing runs it. |
+| 8. Two real NICs | **Pass.** See below. |
+| 9. Flaky interface mid-discovery | **Open.** |
+
+### Step 3's negative case does not exist on this topology
+
+Both `en0` and `en8` find the device, because a setup-mode Squeezebox has no
+IP address and so answers any L2 broadcast reaching its NIC regardless of
+subnet. `en0` and `en8` are two paths onto the same physical segment. There is
+no interface here that legitimately fails to reach it, so "finds nothing, exits
+0" could not be tested deliberately — though it *was* observed incidentally
+whenever `en8` dropped a packet: `no devices found within 2s` on stderr, exit 0.
+
+### Step 8 passed, and the dedup is doing real work
+
+`-v --all-interfaces` shows **four** `found device` events for one device,
+collapsed to a single line of output. Two sockets each hear both broadcasts,
+because both bind `0.0.0.0:17784` with `SO_REUSEPORT` and broadcast traffic is
+delivered to every matching socket. Receive events therefore scale with the
+square of the interface count. **go-udap behaves identically** — four
+`Found device` lines for the same run — so this is faithful, not a defect, but
+it is worth knowing before anyone runs `--all-interfaces` on a host with a
+dozen NICs.
+
+### `en8` drops ~10% of exchanges, and it is not our bug
+
+Interleaved samples binding to `en8`: **udapcfg 18/20, go-udap 17/20**. Equal
+within noise, so the loss is the network path, not the port. `--retries 2` did
+not measurably help (11/12). Do not go looking for this in the Rust code.
+
+### OQ-1's "Verify at M3" rider is resolved
+
+The spec asks to confirm `netdev` still populates `flags` with default features
+off. It does. A probe against the same `netdev` 0.46 configuration the crate
+uses reports `utun16` (Tailscale) as **up, non-loopback, carrying IPv4
+100.122.155.106, and `is_broadcast() == false`** — excluded by the broadcast
+test alone. Flags are discriminating, not defaulted.
+
+This also makes the carried finding below concrete rather than theoretical: on
+*this* host, deleting the `IFF_BROADCAST` check would make `utun16` usable and
+point discovery into a Tailscale tunnel.
+
+### Error paths match byte-for-byte
+
+Both tools, for an unknown interface and for `lo0`:
+
+```
+error: --bind-interface: "nosuch0" is not usable (must be up, broadcast-capable, with an IPv4 address)
+```
+
+exit 1 in each case.
+
+### Note for whoever does steps 5 and 6
+
+`nas1` (TrueNAS Scale, Linux 6.18.42, glibc 2.41, x86_64) is multi-homed onto
+both segments — `bond0` 192.168.1.10 and `vlan20` 192.168.20.10 — and has an
+unprivileged account, so it can answer OQ-2 *and* redo steps 1–4 and 8 on Linux.
+It also has ~11 broadcast-capable IPv4 interfaces, which would stress
+`--all-interfaces` far harder than two.
+
+One trap: `/tmp`, `/home` and `/mnt` are all mounted **`noexec`** there.
+`/var/tmp` is writable and executable. Use a static musl binary from the CI
+build matrix (PR #11) rather than an ad-hoc local cross-build, so the artifact
+comes from a recorded toolchain.
