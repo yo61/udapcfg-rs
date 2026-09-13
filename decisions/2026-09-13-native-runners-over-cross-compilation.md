@@ -105,11 +105,15 @@ system libraries at all.
   `macos-15-intel` are less battle-tested than `ubuntu-latest`. If
   `windows-11-arm` proves flaky the matrix entry can be dropped without
   touching the design.
-- **mise on Windows is unproven here.** mise's own documentation notes
-  asdf plugins cannot run on Windows; `mise.toml` uses the `cargo:`
-  backend, which compiles from source and should be unaffected, but this
-  has not been demonstrated. Fallback if it fails: keep mise for the
-  toolchain, install nextest via a prebuilt-binary action.
+- **mise on Windows works; `rustup` on Windows does not.** The first run
+  of this matrix settled the open worry and found a different one.
+  `jdx/mise-action` completed on both Windows runners, so the `cargo:`
+  backend is fine there. What hung was `rustup target add <host triple>`
+  — no output, killed at 30 minutes, on `windows-latest` and
+  `windows-11-arm` alike, while the same step was instant on Linux and
+  macOS. The step is now restricted to the musl legs, which are the only
+  ones needing a target the host toolchain lacks. Do not reintroduce an
+  unconditional `rustup target add`.
 - **No local cross-building.** A developer on macOS still cannot produce
   a Linux binary without reaching for Docker or zig themselves. CI is
   the only supported path to a foreign-target artifact, deliberately.

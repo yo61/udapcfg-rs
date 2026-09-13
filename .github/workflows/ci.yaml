@@ -46,6 +46,11 @@ jobs:
   build:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    # GitHub's default is 6 hours. A hung step on six runners is an
+    # expensive way to learn nothing, and the first run of this matrix did
+    # exactly that -- see the `Add musl target` comment below. The slowest
+    # healthy leg so far is macOS on a cold cache at well under 30 minutes.
+    timeout-minutes: 30
     strategy:
       # One platform failing must not cancel the rest. The whole point of
       # the matrix is to learn which targets are broken, not just the first.
@@ -94,9 +99,14 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y musl-tools
-      # mise installs Rust via rustup, so rustup manages targets. A no-op
-      # where the target is already the host.
-      - name: Add target
+      # Only musl is a target the host toolchain does not already have --
+      # every other leg builds for the runner it is on. Restricting this to
+      # musl is not just tidiness: on both windows-latest and windows-11-arm,
+      # `rustup target add <host triple>` hung indefinitely (killed at 30
+      # minutes, having produced no output), so running it unconditionally
+      # deadlocks the Windows legs.
+      - name: Add musl target
+        if: contains(matrix.target, 'musl')
         run: rustup target add ${{ matrix.target }}
       - name: Clippy
         run: cargo clippy --all-targets --all-features --target ${{ matrix.target }}
