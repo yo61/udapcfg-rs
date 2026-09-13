@@ -173,10 +173,10 @@ possible. The preamble above, written when it had one, is stale.
 |------|--------|
 | 1. Discovery vs go-udap | **Pass.** Identical MAC, exit 0, 6/6 runs. |
 | 2. Loopback filter on a real socket | **Pass.** `skipping our own looped-back request src=192.168.20.169:17784`; no `00:00:00:00:00:00` phantom. |
-| 3. `--bind-interface` both ways | **Partial.** Positive verified on both NICs; egress genuinely pinned (`IP_BOUND_IF` changes the source address per interface). Negative case not testable — see below. |
+| 3. `--bind-interface` both ways | **Pass** (on Linux). Positive and negative both verified on `nas1`; untestable on the dev host — see below. |
 | 4. `--all-interfaces` exactly once | **Pass.** 6/6, one MAC per run. |
-| 5. OQ-2, `SO_BINDTOIFINDEX` privileges | **Open.** Needs Linux. |
-| 6. Linux kernel floor | **Open.** Needs Linux. |
+| 5. OQ-2, `SO_BINDTOIFINDEX` privileges | **Pass. RESOLVED: no privileges needed.** See below. |
+| 6. Linux kernel floor | **Pass.** Verified on 6.18.42, well above the 5.7 floor. Nothing older to hand. |
 | 7. Windows arm | **Open.** PR #11 adds a CI matrix that compiles and lints it; nothing runs it. |
 | 8. Two real NICs | **Pass.** See below. |
 | 9. Flaky interface mid-discovery | **Open.** |
@@ -192,20 +192,31 @@ whenever `en8` dropped a packet: `no devices found within 2s` on stderr, exit 0.
 
 ### Step 8 passed, and the dedup is doing real work
 
-`-v --all-interfaces` shows **four** `found device` events for one device,
-collapsed to a single line of output. Two sockets each hear both broadcasts,
-because both bind `0.0.0.0:17784` with `SO_REUSEPORT` and broadcast traffic is
-delivered to every matching socket. Receive events therefore scale with the
-square of the interface count. **go-udap behaves identically** — four
-`Found device` lines for the same run — so this is faithful, not a defect, but
-it is worth knowing before anyone runs `--all-interfaces` on a host with a
-dozen NICs.
+`-v --all-interfaces` on the dev host (2 NICs) shows **four** `found device`
+events for one device, collapsed to a single line of output. go-udap shows four
+too. On `nas1` (10 NICs, only one of which reaches the device) both show
+**two**, and both still print one MAC. The dedup is doing real work in each
+case, and the two implementations agree exactly.
 
-### `en8` drops ~10% of exchanges, and it is not our bug
+### The two platform arms filter ingress differently
 
-Interleaved samples binding to `en8`: **udapcfg 18/20, go-udap 17/20**. Equal
-within noise, so the loss is the network path, not the port. `--retries 2` did
-not measurably help (11/12). Do not go looking for this in the Rust code.
+Worth knowing before anyone runs `--all-interfaces` on a many-NIC host, and not
+something any test had surfaced:
+
+| Host | NICs bound | Own-broadcast skips |
+|------|-----------|---------------------|
+| macOS, `IP_BOUND_IF` | 2 | 4 |
+| Linux, `SO_BINDTOIFINDEX` | 10 | 10 |
+
+On macOS each socket sees **every** sibling's broadcast, so loopback skips grow
+with the square of the interface count. On Linux each socket sees only its own,
+so they grow linearly. The options are not equivalent: `IP_BOUND_IF` pins egress
+only and leaves ingress unfiltered, while `SO_BINDTOIFINDEX` is a device binding
+that filters ingress as well.
+
+This is faithful — go-udap selects the same option per platform — and it costs
+nothing at these sizes. Recorded because the quadratic arm is the macOS one, and
+a macOS host with many interfaces would pay for it.
 
 ### OQ-1's "Verify at M3" rider is resolved
 
@@ -241,3 +252,72 @@ One trap: `/tmp`, `/home` and `/mnt` are all mounted **`noexec`** there.
 `/var/tmp` is writable and executable. Use a static musl binary from the CI
 build matrix (PR #11) rather than an ad-hoc local cross-build, so the artifact
 comes from a recorded toolchain.
+
+
+---
+
+## Linux results — 2026-09-13, `nas1`
+
+TrueNAS Scale, Linux 6.18.42, glibc 2.41, x86_64, unprivileged user `robin`,
+10 usable interfaces. Binaries: `udapcfg` from the CI musl build matrix,
+`go-udap` v2.4.9 from the GitHub release — both official builds, no ad-hoc
+cross-compilation.
+
+Discovery matches: both print `00:04:20:16:17:18`, exit 0.
+
+### OQ-2 resolved — `SO_BINDTOIFINDEX` needs no privileges
+
+As unprivileged `robin` on kernel 6.18.42:
+
+```
+./udapcfg --bind-interface bond0 discover   ->  00:04:20:16:17:18   exit 0
+```
+
+The socket bound and discovery succeeded. No `EPERM`, no `CAP_NET_RAW`.
+go-udap, which uses `SO_BINDTODEVICE`, also succeeded unprivileged on the same
+kernel — so on 6.18.42 neither option is restricted, and the Rust port is not
+more restrictive than the Go.
+
+**Consequence for the fidelity contract:** the error text does *not* need to
+mention privileges. Record in the spec's accepted-deltas table that the
+privilege warning in go-udap's message is not reproducible on a current kernel.
+
+Not established: whether an older kernel restricts `SO_BINDTODEVICE` where
+`SO_BINDTOIFINDEX` would not. Only 6.18.42 was available.
+
+### Step 3's negative case, finally testable
+
+`nas1` is multi-homed onto two genuinely separate segments, which the dev host
+was not:
+
+```
+--bind-interface bond0    (192.168.1.10)   ->  00:04:20:16:17:18   exit 0
+--bind-interface vlan20   (192.168.20.10)  ->  no devices found within 2s, exit 0
+```
+
+go-udap gives identical output for both. Finding nothing is not an error —
+verified, not assumed.
+
+### Steps 4 and 8 at ten interfaces
+
+`--all-interfaces` binds 10 transports and prints the device exactly once,
+3/3 runs, matching go-udap. The `BTreeMap<Mac, Device>` dedup holds at five
+times the interface count the dev host could offer.
+
+### A fidelity bug found: non-deterministic `interfaces` order
+
+`udapcfg interfaces` prints its rows in a different order on every run on Linux;
+go-udap is stable at ascending index. Ten interfaces made it obvious where two
+never could. Cause is `netdev`'s Linux netlink backend collecting through a
+`HashMap` and losing the kernel's ordering.
+
+Filed as [issue #13](https://github.com/yo61/udapcfg-rs/issues/13). Not fixed
+here because the faithful fix differs per platform — go-udap does not sort, it
+prints OS order, and OS order is ascending-index on Linux but creation order on
+macOS.
+
+### Remaining
+
+- **Step 7 (Windows runtime).** Still open. The CI matrix in PR #11 compiles and
+  lints the Windows arm; nothing runs it.
+- **Step 9 (flaky interface mid-discovery).** Still open.
