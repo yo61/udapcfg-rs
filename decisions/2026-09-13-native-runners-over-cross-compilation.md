@@ -68,6 +68,11 @@ compiled and linted for the first time — previously nothing anywhere
 built it, so a syntax error or a renamed error variant in that arm would
 have reached a release unnoticed.
 
+Measured on the first green run: 116 tests run, 116 passed, 0 skipped on
+both `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc` — the same
+count as the dev host, so the suite genuinely executed rather than
+`--no-tests=pass` masking an empty run.
+
 Be precise about what that is not. Compiling an arm is not running it.
 No test calls `UdpTransport::bind_on_interface`; the only test naming
 `--bind-interface`
@@ -96,11 +101,17 @@ system libraries at all.
 
 ## Trade-offs accepted:
 
-- **Six jobs where there was one.** Wall-clock CI grows, and the first
-  run on each of the five new platforms pays a cold mise cache. Narrowed
-  by `install_args: rust cargo:cargo-nextest`, which stops cargo-deny,
-  cargo-audit and cargo-mutants being compiled from source on runners
-  that never invoke them.
+- **Six jobs where there was one.** Wall-clock CI grows, though less
+  than feared: the settled matrix runs 91-209 s per leg, against roughly
+  60 s for the single job it replaces, and the legs run concurrently.
+
+  Getting there needed `MISE_DISABLE_TOOLS`, not `install_args`.
+  `install_args` narrows only the *eager* install; mise's shims then
+  install any still-missing tool the first time cargo runs, so the work
+  relocates into the Clippy step instead of disappearing. That is not
+  merely slow — cargo-mutants pulls a dependency with no ARM64 Windows
+  support, so it failed the `aarch64-pc-windows-msvc` leg outright while
+  building a tool that leg never invokes.
 - **Newer runner labels carry less track record.** `windows-11-arm` and
   `macos-15-intel` are less battle-tested than `ubuntu-latest`. If
   `windows-11-arm` proves flaky the matrix entry can be dropped without
