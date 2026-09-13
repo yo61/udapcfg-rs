@@ -51,6 +51,19 @@ jobs:
     # exactly that -- see the `Add musl target` comment below. The slowest
     # healthy leg so far is macOS on a cold cache at well under 30 minutes.
     timeout-minutes: 30
+    env:
+      # This job needs the toolchain and the test runner. The audit and
+      # mutation tools belong to the jobs that actually invoke them.
+      #
+      # install_args alone does not achieve that: mise's shims install any
+      # still-missing tool the first time cargo runs, so narrowing the eager
+      # install just moves the work into the Clippy step. MISE_DISABLE_TOOLS
+      # makes mise ignore them outright.
+      #
+      # Not merely a speed question. cargo-mutants pulls a dependency with no
+      # ARM64 Windows support (`cannot find type ULONG_PTR`), which failed the
+      # aarch64-pc-windows-msvc leg while compiling a tool that leg never runs.
+      MISE_DISABLE_TOOLS: cargo:cargo-mutants,cargo:cargo-audit,cargo:cargo-deny
     strategy:
       # One platform failing must not cancel the rest. The whole point of
       # the matrix is to learn which targets are broken, not just the first.
