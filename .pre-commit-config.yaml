@@ -27,7 +27,9 @@ repos:
   - repo: local
     hooks:
       # Formatting only. clippy is deliberately absent: it takes minutes on
-      # this workspace and the `check` job already runs it with -D warnings.
+      # this workspace, and the `build` matrix in .github/workflows/ci.yaml
+      # runs it with -D warnings on every target -- broader coverage than the
+      # ubuntu-only `check` job that used to run it.
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt --all --check
