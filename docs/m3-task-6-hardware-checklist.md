@@ -165,6 +165,18 @@ Run against a real Squeezebox in setup mode, MAC `00:04:20:16:17:18`
 setup mode). Dev host: macOS 25.6.0, `aarch64-apple-darwin`. Reference:
 go-udap built from `7cce675`.
 
+### Provenance of the reference binary
+
+The spec pins the source of truth to go-udap `v2.4.8` (`43864a5`), but the
+comparisons below used `7cce675` on the dev host and the `v2.4.9` release on
+Linux. That is not a gap: `git diff --name-only v2.4.8..7cce675 -- '*.go' go.mod
+go.sum` is **empty**, and so is `v2.4.8..v2.4.9`. Everything between those points
+is CI, goreleaser, the docs site and decision records. The three binaries are
+behaviourally identical, so every "matches" below holds for the pinned reference.
+
+Check this again if go-udap ever ships a release that does touch `udap/` or
+`cli/` — at that point the comparison would need re-running or the pin moving.
+
 **This host no longer has one usable interface.** It has two — `en0`
 (192.168.1.243) and `en8` (192.168.20.169) — which is what made step 8
 possible. The preamble above, written when it had one, is stale.
@@ -177,7 +189,7 @@ possible. The preamble above, written when it had one, is stale.
 | 4. `--all-interfaces` exactly once | **Pass.** 6/6, one MAC per run. |
 | 5. OQ-2, `SO_BINDTOIFINDEX` privileges | **Pass. RESOLVED: no privileges needed.** See below. |
 | 6. Linux kernel floor | **Pass.** Verified on 6.18.42, well above the 5.7 floor. Nothing older to hand. |
-| 7. Windows arm | **Open.** PR #11 adds a CI matrix that compiles and lints it; nothing runs it. |
+| 7. Windows arm | **Open.** The CI matrix compiles and lints it (116 tests pass on both Windows targets); nothing invokes it. |
 | 8. Two real NICs | **Pass.** See below. |
 | 9. Flaky interface mid-discovery | **Open.** |
 
@@ -250,7 +262,7 @@ It also has ~11 broadcast-capable IPv4 interfaces, which would stress
 
 One trap: `/tmp`, `/home` and `/mnt` are all mounted **`noexec`** there.
 `/var/tmp` is writable and executable. Use a static musl binary from the CI
-build matrix (PR #11) rather than an ad-hoc local cross-build, so the artifact
+build matrix rather than an ad-hoc local cross-build, so the artifact
 comes from a recorded toolchain.
 
 
@@ -318,6 +330,9 @@ macOS.
 
 ### Remaining
 
-- **Step 7 (Windows runtime).** Still open. The CI matrix in PR #11 compiles and
-  lints the Windows arm; nothing runs it.
+- **Step 7 (Windows runtime).** Still open. The CI matrix compiles and lints the
+  Windows arm on both `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`,
+  and the suite reports 116 tests run / 116 passed there. But no test calls
+  `bind_on_interface`, so the unsupported-interface path itself is still never
+  invoked, and nobody has observed Windows surfacing that message at runtime.
 - **Step 9 (flaky interface mid-discovery).** Still open.
