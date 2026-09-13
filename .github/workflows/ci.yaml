@@ -22,14 +22,97 @@ jobs:
           # the newest published release was 2026.9.2, so every run 404'd.
           # Refresh deliberately, the same as the toolchain.
           version: 2026.9.2
+      # Only the platform-independent gates live here. Formatting and the
+      # supply-chain audit read source and metadata, not cfg'd code, so
+      # running them once is running them everywhere. Clippy and the test
+      # suite moved to the build matrix, which runs them on every target
+      # rather than only on this one.
       - name: Format
         run: cargo fmt --all --check
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features
-      - name: Test
-        run: cargo nextest run --all-features --no-tests=pass
       - name: Supply chain
         run: cargo deny check
+
+  # Compile, lint and test every target go-udap ships, each on its own
+  # native runner. Native runners are why this needs no cross-compilation
+  # toolchain -- see
+  # decisions/2026-09-13-native-runners-over-cross-compilation.md.
+  #
+  # This gets the platform-specific #[cfg] arms in udap::transport::udp
+  # COMPILED and linted; before this job, only aarch64-apple-darwin and this
+  # workflow's ubuntu-latest ever built them, so the Windows arm was built by
+  # nothing. It does not get them RUN: no test calls bind_on_interface, so
+  # M3 task 6 step 7 is still open. Do not read a green matrix as Windows
+  # runtime verification.
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One platform failing must not cancel the rest. The whole point of
+      # the matrix is to learn which targets are broken, not just the first.
+      fail-fast: false
+      matrix:
+        include:
+          # Linux ships static/musl, matching go-udap's CGO_ENABLED=0.
+          # A glibc-dynamic build would bind the artifact to the runner's
+          # glibc and be less portable than the tool being ported.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            bin: udapcfg
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            bin: udapcfg
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            bin: udapcfg
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            bin: udapcfg
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            bin: udapcfg.exe
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            bin: udapcfg.exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c  # v4.3.0
+        with:
+          version: 2026.9.2
+          # mise.toml stays the single source of truth for versions, but
+          # this job needs only the toolchain and the test runner. Naming
+          # them skips building cargo-deny, cargo-audit and cargo-mutants
+          # from source on six runners, five of which have no warm cache.
+          install_args: rust cargo:cargo-nextest
+      # musl-gcc. Rust can self-link musl, but the C runtime bits are not
+      # guaranteed present on the runner image.
+      - name: Install musl toolchain
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      # mise installs Rust via rustup, so rustup manages targets. A no-op
+      # where the target is already the host.
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --target ${{ matrix.target }}
+      - name: Test
+        run: cargo nextest run --all-features --no-tests=pass --target ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release -p udap-cli --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: udapcfg-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.bin }}
+          # A silent empty artifact would look like a passing build.
+          if-no-files-found: error
+          # These are verification binaries, not releases. Long enough to
+          # fetch one onto a test host, short enough not to accumulate.
+          retention-days: 14
 
   # Run the same pre-commit hooks contributors run locally
   # (.pre-commit-config.yaml). commitlint is at the commit-msg stage and is

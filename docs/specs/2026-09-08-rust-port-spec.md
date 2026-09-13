@@ -541,10 +541,28 @@ closest equivalent, but has not been evaluated against this feature set —
 particularly the cask and dual SBOM formats. Alternative: a hand-rolled GitHub
 Actions matrix. *Blocks M6 only.* **Resolve by:** prototyping `cargo-dist` at M5.
 
-**OQ-4 — cross-compilation.** Which of `cross` (Docker), `cargo-zigbuild`, or
-per-target rustup toolchains to use for Windows and Linux builds from macOS.
-This is the largest practical regression versus Go. *Blocks M6 only.*
-**Resolve by:** trying `cargo-zigbuild` first — no Docker requirement.
+**OQ-4 — cross-compilation. RESOLVED: nothing cross-compiles.**
+The question asked which of `cross` (Docker), `cargo-zigbuild`, or per-target
+rustup toolchains to use for Windows and Linux builds from macOS, and called
+this the largest practical regression versus Go. It presumed one host must
+produce every target. GitHub-hosted runners now cover all six — including
+`ubuntu-24.04-arm`, `macos-15-intel` and `windows-11-arm` — free and unlimited
+on public repositories, so CI builds each target natively and none of the three
+tools is needed. The regression turns out to apply only to *local* builds,
+which nothing in this project requires.
+
+The gain is that the platform-specific `#[cfg]` arms in
+`udap::transport::udp` are now compiled and linted on every target — the Windows
+body of `bind_to_interface` had never been built by anything. It is *not* yet
+run: no test calls `UdpTransport::bind_on_interface`, so **M3 task 6 step 7
+remains open** and a wrong error variant in that arm would still pass CI.
+Linux ships `*-unknown-linux-musl` (static), matching go-udap's
+`CGO_ENABLED=0`; a glibc-dynamic build would be less portable than the tool
+being ported.
+
+See [`decisions/2026-09-13-native-runners-over-cross-compilation.md`](../../decisions/2026-09-13-native-runners-over-cross-compilation.md)
+for the alternatives weighed and the trade-offs accepted. OQ-3 is untouched:
+this produces workflow artifacts, not releases.
 
 **OQ-5 — Windows `--bind-interface`.** go-udap returns "not yet supported" on
 Windows; the equivalent is `IP_UNICAST_IF`. `socket2` may expose this, which
