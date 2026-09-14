@@ -114,16 +114,6 @@ impl Session {
     ///
     /// # Errors
     /// [`OpError::Recv`] on a transport error, including cancellation.
-    // Its tests exercise it, but no non-test caller exists until the
-    // operations land in ops/ (M4 Task 3) — so the expectation applies
-    // only to the non-test build, and fails once a caller appears.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "callers arrive with ops/ in M4 Task 3; this cannot outlive them"
-        )
-    )]
     pub(crate) async fn wait_for_reply(
         &self,
         cancel: &tokio_util::sync::CancellationToken,
