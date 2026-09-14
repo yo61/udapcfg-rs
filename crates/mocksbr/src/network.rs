@@ -46,17 +46,19 @@ impl Network {
         let Ok((request, _payload)) = Packet::from_bytes(packet) else {
             return Vec::new();
         };
-        if request.ucp_method != method::ADV_DISC {
-            return Vec::new();
-        }
+        // Discovery is a broadcast: every device answers. The directed
+        // operations answer only if the request names them, matching a
+        // real device ignoring traffic addressed elsewhere.
+        let build: fn(&Packet, &DeviceConfig) -> Vec<u8> = match request.ucp_method {
+            method::ADV_DISC => responses::discovery_response,
+            method::GET_IP => responses::get_ip_response,
+            method::GET_UUID => responses::get_uuid_response,
+            _ => return Vec::new(),
+        };
         self.devices
             .iter()
-            .map(|cfg| {
-                (
-                    responses::discovery_response(&request, cfg),
-                    cfg.mac.to_string(),
-                )
-            })
+            .filter(|cfg| request.ucp_method == method::ADV_DISC || request.dst_address == cfg.mac)
+            .map(|cfg| (build(&request, cfg), cfg.mac.to_string()))
             .collect()
     }
 }

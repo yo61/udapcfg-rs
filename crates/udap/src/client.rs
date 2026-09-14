@@ -1,6 +1,7 @@
 //! The UDAP client: owns a transport and the map of discovered devices.
 
 use crate::device::{Device, combine_model};
+use crate::ops::OpError;
 use crate::protocol::{ADDR_TYPE_ETH, Packet, is_request_packet, method};
 use crate::session::Session;
 use crate::transport::{Transport, TransportError};
@@ -85,6 +86,35 @@ impl Client {
     /// Propagates the transport's close error.
     pub async fn close(&self) -> Result<(), TransportError> {
         self.session.close().await
+    }
+
+    /// Queries a device's active network configuration.
+    ///
+    /// Thin wrapper over [`crate::ops::getip::get_ip`], so call sites
+    /// read like go-udap's `GetDeviceNetworkConfigWithContext`.
+    ///
+    /// # Errors
+    /// Propagates [`OpError`].
+    pub async fn get_ip(
+        &self,
+        cancel: &CancellationToken,
+        device: &Device,
+    ) -> Result<crate::NetworkConfig, OpError> {
+        crate::ops::getip::get_ip(&self.session, cancel, device).await
+    }
+
+    /// Queries a device's UUID, hex-encoded.
+    ///
+    /// Thin wrapper over [`crate::ops::getuuid::get_uuid`].
+    ///
+    /// # Errors
+    /// Propagates [`OpError`].
+    pub async fn get_uuid(
+        &self,
+        cancel: &CancellationToken,
+        device: &Device,
+    ) -> Result<String, OpError> {
+        crate::ops::getuuid::get_uuid(&self.session, cancel, device).await
     }
 
     /// Removes a device from the registry and hands it to the caller.

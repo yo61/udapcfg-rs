@@ -37,3 +37,24 @@ pub fn discovery_response(request: &Packet, cfg: &DeviceConfig) -> Vec<u8> {
     tlv::encode_into(0x02, cfg.name.as_bytes(), &mut out);
     out
 }
+
+/// Builds a `get_ip` response: header plus the three address TLVs in
+/// go-udap's order — ip, subnet mask, gateway.
+#[must_use]
+pub fn get_ip_response(request: &Packet, cfg: &DeviceConfig) -> Vec<u8> {
+    let header = build_header(request, cfg, request.ucp_method);
+    let mut out = header.to_bytes().to_vec();
+    tlv::encode_into(0x05, &cfg.ip.octets(), &mut out);
+    tlv::encode_into(0x06, &cfg.subnet_mask.octets(), &mut out);
+    tlv::encode_into(0x07, &cfg.gateway.octets(), &mut out);
+    out
+}
+
+/// Builds a `get_uuid` response: header plus the 16-byte UUID TLV.
+#[must_use]
+pub fn get_uuid_response(request: &Packet, cfg: &DeviceConfig) -> Vec<u8> {
+    let header = build_header(request, cfg, request.ucp_method);
+    let mut out = header.to_bytes().to_vec();
+    tlv::encode_into(0x0d, &cfg.uuid, &mut out);
+    out
+}

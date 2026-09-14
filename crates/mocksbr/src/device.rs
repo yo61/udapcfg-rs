@@ -1,5 +1,6 @@
 //! One virtual Squeezebox Receiver.
 
+use std::net::Ipv4Addr;
 use udap::Mac;
 
 /// Per-device configuration. This is the M2 subset; fault-injection
@@ -19,6 +20,14 @@ pub struct DeviceConfig {
     pub hardware: String,
     /// Reported as TLV 0x0c (`device_status`).
     pub state: String,
+    /// Reported by `get_ip` as TLV 0x05.
+    pub ip: Ipv4Addr,
+    /// Reported by `get_ip` as TLV 0x06.
+    pub subnet_mask: Ipv4Addr,
+    /// Reported by `get_ip` as TLV 0x07.
+    pub gateway: Ipv4Addr,
+    /// Reported by `get_uuid` as TLV 0x0d. Sixteen bytes.
+    pub uuid: [u8; 16],
 }
 
 impl DeviceConfig {
@@ -33,6 +42,16 @@ impl DeviceConfig {
             firmware: "77".to_owned(),
             hardware: "0005".to_owned(),
             state: "wait_slimserver".to_owned(),
+            // A device in setup mode has no lease, so every address is
+            // unspecified — which `NetworkConfig` renders as "-".
+            ip: Ipv4Addr::UNSPECIFIED,
+            subnet_mask: Ipv4Addr::UNSPECIFIED,
+            gateway: Ipv4Addr::UNSPECIFIED,
+            // Fixed rather than random, so tests are reproducible.
+            uuid: [
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
+                0x32, 0x10,
+            ],
         }
     }
 }
