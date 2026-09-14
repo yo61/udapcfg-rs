@@ -1,6 +1,6 @@
 //! The fault-injection knobs, driven through the real client.
 
-use mocksbr::{DeviceConfig, MockTransport, Network, Op};
+use mocksbr::{DeviceConfig, Malformed, MockTransport, Network, Op};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -163,4 +163,68 @@ async fn drop_get_uuid_silences_only_get_uuid() {
         &device
     ))
     .expect("get_ip is unaffected");
+}
+
+#[tokio::test]
+async fn an_oversized_count_is_caught_by_the_per_item_bounds_check() {
+    // The device promises 65535 items and writes no bodies.
+    let (session, device) = fixture_with(|cfg| cfg.malformed = Malformed::OversizedCount);
+    let err = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["hostname"]
+    ))
+    .expect_err("the reply is malformed");
+    assert!(
+        err.to_string().contains("truncated header for item 0"),
+        "expected the bounds check to fire, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn an_item_longer_than_the_payload_is_rejected() {
+    // One item declaring length 1000, with nothing following it.
+    let (session, device) = fixture_with(|cfg| cfg.malformed = Malformed::LengthExceedsPayload);
+    let err = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["hostname"]
+    ))
+    .expect_err("the reply is malformed");
+    assert!(
+        err.to_string().contains("exceeds payload"),
+        "expected the item-length check to fire, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_reply_method_is_reported_with_its_value() {
+    let (session, device) = fixture_with(|cfg| cfg.malformed = Malformed::UnknownMethod);
+    let err = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["hostname"]
+    ))
+    .expect_err("0x9999 is not a reply we accept");
+    assert_eq!(
+        err.to_string(),
+        "device 00:04:20:16:17:18: unexpected response method 0x9999"
+    );
+}
+
+#[tokio::test]
+async fn a_well_formed_device_decodes_cleanly() {
+    // The control: without the knob the same request succeeds, so the
+    // three tests above are attributable to the malformation.
+    let (session, device) = fixture_with(|_| {});
+    within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["hostname"]
+    ))
+    .expect("a well-formed reply decodes");
 }

@@ -45,6 +45,8 @@ pub struct DeviceConfig {
     pub drop_get_ip: bool,
     /// Fault injection: `get_uuid` requests get no reply.
     pub drop_get_uuid: bool,
+    /// Fault injection: a deliberately broken `get_data` reply.
+    pub malformed: Malformed,
 }
 
 impl DeviceConfig {
@@ -74,6 +76,7 @@ impl DeviceConfig {
             unreachable: false,
             drop_get_ip: false,
             drop_get_uuid: false,
+            malformed: Malformed::None,
         }
     }
 }
@@ -122,4 +125,23 @@ impl Op {
             Op::GetUuid => "getuuid",
         }
     }
+}
+
+/// A deliberately broken reply shape, for exercising the client's
+/// decode error paths.
+///
+/// Applies to `get_data` only, matching go-udap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Malformed {
+    /// Well-formed replies.
+    #[default]
+    None,
+    /// Declare 65535 items and write no bodies, so the client's
+    /// per-item bounds check fires on the first one.
+    OversizedCount,
+    /// Declare one item of length 1000 and write nothing, so the
+    /// client's "item exceeds payload" check fires.
+    LengthExceedsPayload,
+    /// Reply with an unrecognised UCP method.
+    UnknownMethod,
 }
