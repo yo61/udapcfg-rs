@@ -370,6 +370,30 @@ by CI but is still never invoked by a test.
 in `set`. Contains the ADR-3 ownership work. *Done when:* all six UCP operations
 round-trip against `mocksbr`.
 
+*Condition met 2026-09-14.* All six round-trip: `discover`, `get_data`,
+`set_data`, `reset`, `get_ip`, `get_uuid`. 191 tests.
+
+ADR-3's prediction needed amending, as ADR-3's own note anticipated. The ADR
+specifies operations taking `&self` plus `&mut Device`, but `&Client` and
+`&mut Client.devices[..]` are two overlapping borrows, so operations cannot be
+`Client` methods that mutate a registered device. They are free functions in
+`ops/` over a [`Session`] — the transport, retry count and sequence, split out
+of `Client` — and a caller-held `Device`; `Client` keeps discovery, the
+registry, and thin wrappers so call sites still read like go-udap's.
+
+That split is not only what the borrow checker permits. Measured in go-udap,
+nothing re-reads the client's device map after an operation: the only non-test
+references are a lookup *before* one and the discovery write. The pointer
+aliasing the Go relies on is real but not load-bearing, so `Client::take_device`
+*moves* a device out rather than cloning, encoding "discovery result, not live
+mirror" in the type system.
+
+Three inconsistencies in go-udap's error handling are carried forward rather
+than unified, since the text is user-visible: `get` does not decode the
+error-message TLV that `get_ip`, `set` and `reset` do, and has no credentials
+case; `reset` words its rejection "rejected reset"; and `reset` treats a
+cancelled wait as success, because the device may reboot before acknowledging.
+
 **M5 — mocksbr complete**
 All handlers, the fault-injection knobs, the standalone binary. Unblocks the
 full e2e suite. *Done when:* go-udap's `mocksbr` integration tests pass in Rust.
@@ -471,6 +495,15 @@ Deviations we are taking knowingly. Anything not listed here is a bug.
 
 Recorded so we do not "fix" them mid-port and lose fidelity, and so a later
 redesign has a list to work from.
+
+**`set` caches parameters it never sent.** `CreateSetDataPacket` skips any name
+the parameter table does not know, logging a warning, so those names never reach
+the device. The post-acknowledgement merge then copies the caller's *whole* map
+into `Device.Parameters` (`udap/config.go:151`), including the skipped ones — so
+the cache reports a value the device never received. That is the same staleness
+the commit barrier three lines above exists to prevent, applied inconsistently.
+Reproduced rather than fixed; `crates/udap/tests/ops_config.rs` pins the
+behaviour so a future change to it is deliberate.
 
 1. **`Device.Parameters` mixes known and unknown keys.** Unrecognised NVRAM
    offsets are stored as synthetic `offset_NNN` string keys, which then need

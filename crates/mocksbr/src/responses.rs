@@ -124,3 +124,14 @@ pub fn error_response(request: &Packet, cfg: &DeviceConfig, message: &str) -> Ve
     }
     out
 }
+
+/// Builds a `set_data` acknowledgement: header only, no payload.
+///
+/// go-udap accepts 0x0006, 0x0005 or 0x0002 as an acknowledgement; real
+/// devices have been observed answering with the method they were sent.
+#[must_use]
+pub fn set_data_response(request: &Packet, cfg: &DeviceConfig) -> Vec<u8> {
+    build_header(request, cfg, request.ucp_method)
+        .to_bytes()
+        .to_vec()
+}
