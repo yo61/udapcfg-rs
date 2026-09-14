@@ -103,6 +103,21 @@ impl Client {
         crate::ops::config::get(&self.session, cancel, device, params).await
     }
 
+    /// Writes `config` to a device, preserving everything else.
+    ///
+    /// Thin wrapper over [`crate::ops::config::set`].
+    ///
+    /// # Errors
+    /// Propagates [`OpError`].
+    pub async fn set_config(
+        &self,
+        cancel: &CancellationToken,
+        device: &mut Device,
+        config: &std::collections::BTreeMap<String, Vec<u8>>,
+    ) -> Result<(), OpError> {
+        crate::ops::config::set(&self.session, cancel, device, config).await
+    }
+
     /// Reads every known parameter into `device.parameters`.
     ///
     /// Thin wrapper over [`crate::ops::config::get_all`]. Takes

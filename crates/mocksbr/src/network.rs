@@ -70,6 +70,7 @@ impl Network {
                     method::GET_UUID => responses::get_uuid_response(&request, cfg),
                     method::GET_DATA => responses::get_data_response(&request, cfg, payload),
                     method::RESET => responses::reset_response(&request, cfg),
+                    method::SET_DATA => responses::set_data_response(&request, cfg),
                     _ => return None,
                 };
                 Some((reply, cfg.mac.to_string()))

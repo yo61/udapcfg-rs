@@ -1,7 +1,9 @@
 //! `get`, `get_all` and `reset` against `mocksbr`.
 
 use mocksbr::{DeviceConfig, MockTransport, Network};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use udap::{Device, Mac, Session, ops};
@@ -249,4 +251,251 @@ async fn reset_reports_a_refusal_with_no_explanation() {
     ))
     .expect_err("the device refused");
     assert_eq!(err.to_string(), "device 00:04:20:16:17:18 rejected reset");
+}
+
+/// Wraps a transport and counts sends, so a test can prove how many
+/// round trips an operation made.
+struct CountingTransport {
+    inner: MockTransport,
+    sends: Arc<AtomicUsize>,
+    sent: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+#[async_trait::async_trait]
+impl udap::transport::Transport for CountingTransport {
+    async fn send(&self, packet: &[u8]) -> Result<(), udap::transport::TransportError> {
+        self.sends.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut sent) = self.sent.lock() {
+            sent.push(packet.to_vec());
+        }
+        self.inner.send(packet).await
+    }
+    async fn recv(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<(Vec<u8>, String), udap::transport::TransportError> {
+        self.inner.recv(cancel).await
+    }
+    async fn close(&self) -> Result<(), udap::transport::TransportError> {
+        self.inner.close().await
+    }
+}
+
+type Sent = Arc<Mutex<Vec<Vec<u8>>>>;
+
+fn counting_fixture() -> (Session, Device, Arc<AtomicUsize>, Sent) {
+    let mac = Mac::from_bytes(MAC);
+    let network = Arc::new(Network::new(vec![DeviceConfig::default_with_mac(mac)]));
+    let sends = Arc::new(AtomicUsize::new(0));
+    let sent: Sent = Arc::new(Mutex::new(Vec::new()));
+    let transport = CountingTransport {
+        inner: MockTransport::new(network),
+        sends: Arc::clone(&sends),
+        sent: Arc::clone(&sent),
+    };
+    let device = Device {
+        mac,
+        ..Device::default()
+    };
+    (Session::new(Box::new(transport)), device, sends, sent)
+}
+
+/// The item count a request body declares, or `None` if it is not the
+/// method asked for. Layout: 27-byte header, 32 credential bytes, then a
+/// big-endian u16 count.
+fn item_count(packet: &[u8], want_method: u16) -> Option<u16> {
+    const HEADER: usize = 27;
+    const CREDENTIALS: usize = 32;
+    let (parsed, _) = udap::Packet::from_bytes(packet).ok()?;
+    if parsed.ucp_method != want_method {
+        return None;
+    }
+    let at = HEADER + CREDENTIALS;
+    Some(u16::from_be_bytes([packet[at], packet[at + 1]]))
+}
+
+fn change(name: &str, value: &[u8]) -> BTreeMap<String, Vec<u8>> {
+    let mut map = BTreeMap::new();
+    map.insert(name.to_owned(), value.to_vec());
+    map
+}
+
+#[tokio::test]
+async fn set_writes_every_parameter_not_only_the_ones_asked_for() {
+    // Omitting a parameter from a set_data request writes zeros over the
+    // neighbouring NVRAM region, which is the whole reason set does a
+    // read-modify-write.
+    //
+    // This inspects the packet, not device.parameters: the cache is
+    // populated by the prelude read either way, so asserting on it passes
+    // even when the request carried a single item. Found by mutation
+    // testing -- the earlier version of this test could not tell the
+    // difference.
+    let (session, mut device, _sends, sent) = counting_fixture();
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ))
+    .expect("set succeeds");
+
+    let packets = sent.lock().expect("not poisoned");
+    let count = packets
+        .iter()
+        .find_map(|p| item_count(p, 0x0006))
+        .expect("a SetData request was sent");
+    assert!(
+        count > 1,
+        "SetData carried {count} item(s): a single item means the caller's \
+         change alone, zeroing every neighbouring NVRAM field"
+    );
+    assert_eq!(
+        usize::from(count),
+        udap::parameters::names().count(),
+        "the merged set is every known parameter"
+    );
+}
+
+#[tokio::test]
+async fn set_records_the_new_value_after_the_device_acknowledges() {
+    let (session, mut device) = fixture();
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ))
+    .expect("set succeeds");
+
+    assert_eq!(
+        device.parameters.get("wireless_channel").map(Vec::as_slice),
+        Some(b"11".as_slice()),
+        "an acknowledged write updates the cache"
+    );
+}
+
+#[tokio::test]
+async fn set_skips_the_prelude_read_when_parameters_are_cached() {
+    // cli/set.go pre-populates parameters so this is one round trip, not
+    // two. Counting sends is what proves the prelude was skipped.
+    let (session, mut device, sends, _sent) = counting_fixture();
+    within!(ops::config::get_all(
+        &session,
+        &CancellationToken::new(),
+        &mut device
+    ))
+    .expect("prime the cache");
+    let after_priming = sends.load(Ordering::SeqCst);
+
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ))
+    .expect("set succeeds");
+
+    assert_eq!(
+        sends.load(Ordering::SeqCst) - after_priming,
+        1,
+        "a primed cache means one send: the SetData itself"
+    );
+}
+
+#[tokio::test]
+async fn set_reads_first_when_the_cache_is_empty() {
+    // The converse: without a primed cache it is two sends, the prelude
+    // GetData and the SetData.
+    let (session, mut device, sends, _sent) = counting_fixture();
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ))
+    .expect("set succeeds");
+
+    assert_eq!(sends.load(Ordering::SeqCst), 2, "prelude read, then write");
+}
+
+#[tokio::test]
+async fn set_does_not_record_a_value_the_device_never_acknowledged() {
+    // The commit barrier. go-udap moved this merge after the ack because
+    // doing it earlier left parameters advertising values that were
+    // never persisted when the round trip failed.
+    let (session, mut device) = failing_fixture("locked");
+    device
+        .parameters
+        .insert("wireless_channel".to_owned(), b"6".to_vec());
+
+    let result = within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ));
+
+    assert!(result.is_err(), "the device refused the write");
+    assert_eq!(
+        device.parameters.get("wireless_channel").map(Vec::as_slice),
+        Some(b"6".as_slice()),
+        "a refused write must leave the cached value alone, not show 11"
+    );
+}
+
+#[tokio::test]
+async fn set_refuses_a_device_with_no_mac() {
+    let (session, _) = fixture();
+    let err = within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut Device::default(),
+        &change("wireless_channel", b"11")
+    ))
+    .expect_err("a zero MAC cannot be addressed");
+    assert_eq!(
+        err.to_string(),
+        "cannot build SetData packet: device has zero MAC address"
+    );
+}
+
+#[tokio::test]
+async fn set_caches_a_name_it_never_sent() {
+    // A carried-forward wart, pinned so a change to it is deliberate.
+    //
+    // set_data_payload skips names the parameter table does not know, so
+    // they never reach the device — but the post-ack merge copies the
+    // caller's whole map, so the cache reports them anyway. go-udap does
+    // the same. See the spec's known warts.
+    let (session, mut device, _sends, sent) = counting_fixture();
+    let mut config = change("wireless_channel", b"11");
+    config.insert("not_a_real_parameter".to_owned(), b"whatever".to_vec());
+
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &config
+    ))
+    .expect("the unknown name does not fail the write");
+
+    let packets = sent.lock().expect("not poisoned");
+    let count = packets
+        .iter()
+        .find_map(|p| item_count(p, 0x0006))
+        .expect("a SetData request was sent");
+    assert_eq!(
+        usize::from(count),
+        udap::parameters::names().count(),
+        "the unknown name was not sent to the device"
+    );
+    assert_eq!(
+        device
+            .parameters
+            .get("not_a_real_parameter")
+            .map(Vec::as_slice),
+        Some(b"whatever".as_slice()),
+        "yet it is cached: the wart this test documents"
+    );
 }

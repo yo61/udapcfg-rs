@@ -80,7 +80,7 @@ Two pure modules, no I/O and no async. Deliberately first: they are mechanical, 
   - `pub fn validate_parameter(name: &str, value: &str) -> Result<(), ValidationError>`
   - `pub enum ValidationError` (thiserror)
 
-- [ ] **Step 1: Write the failing tests for `netconfig`**
+- [x] **Step 1: Write the failing tests for `netconfig`**
 
 `crates/udap/src/netconfig.rs`:
 
@@ -126,12 +126,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests and watch them fail**
+- [x] **Step 2: Run the tests and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --lib netconfig`
 Expected: compile error — `NetworkConfig` not found. Add the struct with `todo!()`-free stubs (a `Display` impl returning `String::new()`) until the failures are assertion failures rather than compile errors.
 
-- [ ] **Step 3: Implement `netconfig`**
+- [x] **Step 3: Implement `netconfig`**
 
 ```rust
 //! The result of a `get_ip` (0x0002) query.
@@ -176,12 +176,12 @@ impl fmt::Display for NetworkConfig {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --lib netconfig`
 Expected: 3 passed.
 
-- [ ] **Step 5: Write the failing tests for `validation`**
+- [x] **Step 5: Write the failing tests for `validation`**
 
 Error strings are copied verbatim from `udap/validation.go:35-97`. They are user-visible; do not reword them.
 
@@ -282,12 +282,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 6: Run the tests and watch them fail**
+- [x] **Step 6: Run the tests and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --lib validation`
 Expected: every test fails; the messages are the point.
 
-- [ ] **Step 7: Implement `validation`**
+- [x] **Step 7: Implement `validation`**
 
 Note the ordering: the width check runs first, then the parameter-specific rule, exactly as `validateParameter` does. A value can fail either.
 
@@ -423,12 +423,12 @@ pub fn validate_parameter(name: &str, value: &str) -> Result<(), ValidationError
    comment explicitly notes `ParseUint` was chosen over `fmt.Sscanf` because
    the latter accepts `"1abc"` — so do not reach for a permissive scan either.
 
-- [ ] **Step 8: Run the tests and watch them pass**
+- [x] **Step 8: Run the tests and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --lib validation`
 Expected: 12 passed.
 
-- [ ] **Step 9: Wire both modules into the crate**
+- [x] **Step 9: Wire both modules into the crate**
 
 Append to `crates/udap/src/lib.rs` (append-only — do not reorder or remove):
 
@@ -440,7 +440,7 @@ pub use netconfig::NetworkConfig;
 pub use validation::{ValidationError, validate_parameter};
 ```
 
-- [ ] **Step 10: Verify the whole gate**
+- [x] **Step 10: Verify the whole gate**
 
 ```bash
 mise exec -- cargo fmt --all --check
@@ -449,7 +449,7 @@ mise exec -- cargo test --workspace
 ```
 Expected: fmt clean, clippy silent, all tests pass.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add crates/udap/src/netconfig.rs crates/udap/src/validation.rs crates/udap/src/lib.rs
@@ -510,7 +510,7 @@ Extract the wire half of `Client` so operations can borrow it independently of t
   - `pub(crate) async fn Session::wait_for_reply(&self, cancel: &CancellationToken, device: &Device) -> Result<(Packet, Vec<u8>), OpError>`
   - `pub async fn Session::close(&self) -> Result<(), TransportError>`
 
-- [ ] **Step 1: Write the failing test for reply matching**
+- [x] **Step 1: Write the failing test for reply matching**
 
 This is the only genuinely new behaviour in the task. `wait_for_reply` must skip replies from other devices and keep waiting, not return them.
 
@@ -603,12 +603,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests and watch them fail**
+- [x] **Step 2: Run the tests and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --lib session`
 Expected: compile error — `Session` not found.
 
-- [ ] **Step 3: Create `Session`, moving code out of `client.rs`**
+- [x] **Step 3: Create `Session`, moving code out of `client.rs`**
 
 Move `send_retried`, the header builder and the `sequence` field from `client.rs` verbatim. Add `wait_for_reply`, ported from `udap/config.go:24-48`:
 
@@ -650,7 +650,7 @@ pub(crate) async fn wait_for_reply(
 }
 ```
 
-- [ ] **Step 4: Re-point `Client` at the `Session`**
+- [x] **Step 4: Re-point `Client` at the `Session`**
 
 `Client` gains a `session: Session` field and delegates. `discover` changes only in that it calls `self.session.send_retried(...)` and `self.session.header(...)`. Its behaviour, including "a cancelled receive ends discovery successfully", is unchanged.
 
@@ -668,12 +668,12 @@ pub fn take_device(&mut self, mac: Mac) -> Option<Device> {
 }
 ```
 
-- [ ] **Step 5: Run the full suite and watch it pass unchanged**
+- [x] **Step 5: Run the full suite and watch it pass unchanged**
 
 Run: `mise exec -- cargo test --workspace`
 Expected: every pre-existing test still passes, plus the two new session tests. **If any existing test changed behaviour, the extraction is wrong — revert and redo it.**
 
-- [ ] **Step 6: Verify the gate and commit**
+- [x] **Step 6: Verify the gate and commit**
 
 ```bash
 mise exec -- cargo fmt --all --check
@@ -702,7 +702,7 @@ The two smallest operations. Both are request-then-decode with no device mutatio
   - `fn getip::parse_response(data: &[u8]) -> NetworkConfig`
   - `fn getuuid::parse_response(data: &[u8]) -> Result<String, OpError>`
 
-- [ ] **Step 1: Extend `OpError` and declare the submodules**
+- [x] **Step 1: Extend `OpError` and declare the submodules**
 
 `crates/udap/src/ops/mod.rs` already exists from Task 2. Add the `pub mod` lines and any variants it lacks:
 
@@ -742,7 +742,7 @@ pub enum OpError {
 }
 ```
 
-- [ ] **Step 2: Write the failing decoder tests**
+- [x] **Step 2: Write the failing decoder tests**
 
 These are pure functions — test them before any async plumbing.
 
@@ -831,12 +831,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run and watch them fail**
+- [x] **Step 3: Run and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --lib ops::`
 Expected: compile errors — the modules do not exist yet.
 
-- [ ] **Step 4: Implement both decoders**
+- [x] **Step 4: Implement both decoders**
 
 **Reuse `tlv::decode`; do not hand-roll the walk.** `crates/udap/src/tlv.rs:19`
 already implements exactly this `tag(u8)/len(u8)/value` loop with the same
@@ -906,12 +906,12 @@ fn parse_response(data: &[u8]) -> Result<String, OpError> {
 
 `hex::encode` is already `pub(crate)`, so it is reachable from `ops/`.
 
-- [ ] **Step 5: Run and watch them pass**
+- [x] **Step 5: Run and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --lib ops::`
 Expected: 8 passed.
 
-- [ ] **Step 6: Teach `mocksbr` to answer `get_ip` and `get_uuid`**
+- [x] **Step 6: Teach `mocksbr` to answer `get_ip` and `get_uuid`**
 
 `Network::receive` (`crates/mocksbr/src/network.rs:45`) currently returns no
 reply for anything but `ADV_DISC`:
@@ -933,7 +933,7 @@ Extend `DeviceConfig` with the fields the responses need (`ip`, `subnet_mask`,
 `gateway`, `uuid`), defaulting to the factory values a setup-mode device
 reports: unspecified addresses, and a fixed UUID for reproducibility.
 
-- [ ] **Step 7: Write the failing round-trip tests**
+- [x] **Step 7: Write the failing round-trip tests**
 
 The decoders are already covered; these pin the async wrappers, which is where
 the header, the send and the reply-matching all meet.
@@ -1003,14 +1003,14 @@ async fn get_ip_ignores_a_reply_from_another_device() {
 }
 ```
 
-- [ ] **Step 8: Run and watch them fail**
+- [x] **Step 8: Run and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --test ops_getip_getuuid`
 Expected: failures — the mock answers nothing, so these time out or return
 `OpError::Recv`. That is the correct red: it proves the test exercises the
 wire path rather than the decoder.
 
-- [ ] **Step 9: Add the async operation wrappers**
+- [x] **Step 9: Add the async operation wrappers**
 
 ```rust
 /// Queries a device's active network configuration (UCP 0x0002).
@@ -1038,12 +1038,12 @@ pub async fn get_ip(
 
 `device_error` lives in `ops/mod.rs`: it decodes the payload with `tlv::decode`, finds the error-message TLV, and builds `OpError::Device { mac, message }`. Check `udap/config.go:157-166` for the exact TLV type constant and the `String::from_utf8_lossy` treatment of the message.
 
-- [ ] **Step 10: Run and watch them pass**
+- [x] **Step 10: Run and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --test ops_getip_getuuid`
 Expected: 3 passed.
 
-- [ ] **Step 11: Add `Client` wrappers, verify the gate, commit**
+- [x] **Step 11: Add `Client` wrappers, verify the gate, commit**
 
 ```rust
 impl Client {
@@ -1087,7 +1087,7 @@ The read side of configuration, plus the simplest write. `set` is deliberately d
   - `pub async fn reset(session, cancel, device: &Device) -> Result<(), OpError>`
   - `Device.parameters: BTreeMap<String, Vec<u8>>`
 
-- [ ] **Step 1: Add the `parameters` field to `Device`**
+- [x] **Step 1: Add the `parameters` field to `Device`**
 
 ```rust
 /// NVRAM values most recently read from the device.
@@ -1102,7 +1102,7 @@ The read side of configuration, plus the simplest write. `set` is deliberately d
 pub parameters: BTreeMap<String, Vec<u8>>,
 ```
 
-- [ ] **Step 2: Write the failing test for `get_all` as an output channel**
+- [x] **Step 2: Write the failing test for `get_all` as an output channel**
 
 Use `mocksbr` — this is the first operation test that needs a device that answers `get_data`. If `mocksbr` does not yet handle 0x0005, extend it here; that work belongs to this task, not a separate one.
 
@@ -1156,12 +1156,12 @@ async fn get_all_drops_stale_offset_entries() {
 }
 ```
 
-- [ ] **Step 3: Run and watch them fail**
+- [x] **Step 3: Run and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --test ops_config`
 Expected: compile error, then assertion failures once stubs exist.
 
-- [ ] **Step 4: Implement `get`, `get_all`, `reset`**
+- [x] **Step 4: Implement `get`, `get_all`, `reset`**
 
 Port from `udap/config.go:53-90` (`get`), `:91-111` (`get_all`), `:176-217` (`reset`). The three behaviours to get right:
 
@@ -1169,16 +1169,16 @@ Port from `udap/config.go:53-90` (`get`), `:91-111` (`get_all`), `:176-217` (`re
 2. `get_all` calls `get` with `parameters::names()`, clears `offset_`-prefixed keys from `device.parameters`, then merges. It returns `Result<(), OpError>` — **not** the map.
 3. `reset` sends UCP 0x0004 and waits for the ack. It does not touch `device.parameters`.
 
-- [ ] **Step 5: Run and watch them pass**
+- [x] **Step 5: Run and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --test ops_config`
 Expected: 2 passed.
 
-- [ ] **Step 6: Add the fixture assertions**
+- [x] **Step 6: Add the fixture assertions**
 
 Copy `reset-ack.bin` from `~/code/github.com/yo61/go-udap/mocksbr/testdata/captures/` into `crates/udap/tests/fixtures/` and assert the reset path parses it. **The captures were taken with `sequence=1` and an all-zeros source MAC** — build requests the same way or the bytes will not match.
 
-- [ ] **Step 7: Verify the gate and commit**
+- [x] **Step 7: Verify the gate and commit**
 
 ```bash
 mise exec -- cargo fmt --all --check
@@ -1202,7 +1202,7 @@ The hard one, and the reason it gets its own task. Three behaviours must be port
 - Consumes: everything from Task 4
 - Produces: `pub async fn set(session, cancel, device: &mut Device, config: &BTreeMap<String, Vec<u8>>) -> Result<(), OpError>`
 
-- [ ] **Step 1: Write the three failing behaviour tests**
+- [x] **Step 1: Write the three failing behaviour tests**
 
 ```rust
 #[tokio::test]
@@ -1290,12 +1290,12 @@ async fn set_does_not_record_values_the_device_never_acknowledged() {
 
 `CountingTransport` and `FailingAfterSend` are test-only wrappers around `MockTransport`; put them in the same test file. `CountingTransport` holds an `Arc<AtomicUsize>` incremented in `send`; `FailingAfterSend` delegates `send` and returns `TransportError::Cancelled` from `recv`.
 
-- [ ] **Step 2: Run and watch all three fail**
+- [x] **Step 2: Run and watch all three fail**
 
 Run: `mise exec -- cargo test -p udap --test ops_config`
 Expected: compile error on `set`, then three assertion failures.
 
-- [ ] **Step 3: Implement `set`**
+- [x] **Step 3: Implement `set`**
 
 Port from `udap/config.go:120-175`. The order is the specification:
 
@@ -1312,16 +1312,16 @@ Port from `udap/config.go:120-175`. The order is the specification:
 6. On ERROR: decode the error TLV and return OpError::Device.
 ```
 
-- [ ] **Step 4: Run and watch them pass**
+- [x] **Step 4: Run and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --test ops_config`
 Expected: 5 passed (2 from Task 4, 3 new).
 
-- [ ] **Step 5: Add the remaining fixtures**
+- [x] **Step 5: Add the remaining fixtures**
 
 Copy `setdata-status-ack.bin`, `setdata-empty-ack.bin` and `savedata-status-ack.bin` into `crates/udap/tests/fixtures/` and assert each parses through the `set` reply path.
 
-- [ ] **Step 6: Add the `Client` wrapper**
+- [x] **Step 6: Add the `Client` wrapper**
 
 ```rust
 /// See [`ops::config::set`].
@@ -1338,7 +1338,7 @@ pub async fn set_config(
 }
 ```
 
-- [ ] **Step 7: Verify the gate and commit**
+- [x] **Step 7: Verify the gate and commit**
 
 ```bash
 mise exec -- cargo fmt --all --check

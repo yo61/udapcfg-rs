@@ -172,6 +172,112 @@ pub async fn reset(
     }
 }
 
+/// Builds a `set_data` request body for `params`.
+///
+/// Layout mirrors `get_data`'s, with a value after each offset/length
+/// pair. `Parameter::encode` owns the wire encoding and guarantees
+/// exactly `length` bytes on success, so there is no separate padding
+/// step. Unknown names are skipped with a warning; items are sorted by
+/// offset, which the fidelity contract names explicitly.
+///
+/// # Errors
+/// [`OpError::Encode`] if a value will not fit its parameter, naming the
+/// parameter as go-udap does (`param %q: %w`).
+fn set_data_payload(params: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>, OpError> {
+    let mut items = Vec::with_capacity(params.len());
+    for (name, value) in params {
+        if let Some(p) = parameters::by_name(name) {
+            items.push((p, value));
+        } else {
+            tracing::warn!(param = %name, "unknown parameter skipped");
+        }
+    }
+    items.sort_by_key(|(p, _)| p.offset);
+
+    let mut out = vec![0u8; CREDENTIAL_FIELDS];
+    let count = u16::try_from(items.len()).unwrap_or(u16::MAX);
+    out.extend_from_slice(&count.to_be_bytes());
+    for (param, value) in items {
+        let encoded = param.encode(value)?;
+        out.extend_from_slice(&param.offset.to_be_bytes());
+        out.extend_from_slice(&param.length.to_be_bytes());
+        out.extend_from_slice(&encoded);
+    }
+    Ok(out)
+}
+
+/// Writes `config` to a device, preserving everything else.
+///
+/// Read-modify-write. Omitting a parameter from a `set_data` request
+/// writes zeros over the neighbouring NVRAM region, so the device's
+/// current values are read first and `config` overlaid on top. If
+/// `device.parameters` is already populated — as `cli/set.go` arranges —
+/// that prelude read is skipped, turning two round trips into one.
+///
+/// A failed prelude read aborts the whole operation. go-udap's earlier
+/// warn-and-continue path produced exactly the partial write the read
+/// exists to prevent.
+///
+/// # Errors
+/// [`OpError::ZeroMac`], [`OpError::Encode`] if a value will not fit, or
+/// the device-reply variants. Note this switch is the four-arm one, like
+/// [`crate::ops::getip::get_ip`] and unlike [`get`] directly above.
+pub async fn set(
+    session: &Session,
+    cancel: &CancellationToken,
+    device: &mut Device,
+    config: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), OpError> {
+    if device.mac.is_zero() {
+        return Err(OpError::ZeroMac {
+            operation: "SetData",
+        });
+    }
+    if device.parameters.is_empty() {
+        info!("device parameters not loaded, reading current configuration");
+        get_all(session, cancel, device).await?;
+    }
+
+    let mut merged = device.parameters.clone();
+    merged.extend(config.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+    let mut packet = session
+        .header(device.mac, method::SET_DATA, false)
+        .to_bytes()
+        .to_vec();
+    packet.extend_from_slice(&set_data_payload(&merged)?);
+    session.send_retried(&packet).await.map_err(OpError::Send)?;
+    info!(mac = %device.mac, total_params = merged.len(), "sent SetData request");
+
+    let (reply, payload) = session.wait_for_reply(cancel, device).await?;
+    match reply.ucp_method {
+        // go-udap accepts three acknowledgement methods here, not one.
+        method::SET_DATA | method::GET_DATA | method::GET_IP => {
+            // The commit barrier. Merging before the acknowledgement left
+            // device.parameters advertising values that were never
+            // persisted whenever the round trip failed.
+            //
+            // Carried-forward wart: this merges the caller's whole map,
+            // including names `set_data_payload` skipped because the
+            // parameter table does not know them. Those were never sent,
+            // so the cache ends up showing a value the device never
+            // received — the same shape of staleness the barrier exists
+            // to prevent. go-udap does the same (`maps.Copy(device
+            // .Parameters, config)` against a filtered packet), so it is
+            // reproduced rather than fixed. See the spec's known warts.
+            device
+                .parameters
+                .extend(config.iter().map(|(k, v)| (k.clone(), v.clone())));
+            info!(
+                method = format!("0x{:04x}", reply.ucp_method),
+                "device acknowledged configuration change"
+            );
+            Ok(())
+        }
+        _ => Err(crate::ops::reply_error(device, &reply, &payload)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
