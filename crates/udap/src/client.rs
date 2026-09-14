@@ -1,9 +1,8 @@
 //! The UDAP client: owns a transport and the map of discovered devices.
 
 use crate::device::{Device, combine_model};
-use crate::protocol::{
-    ADDR_TYPE_ETH, FLAG_REQUEST, Packet, UAP_CLASS_UCP, UDAP_TYPE_UCP, is_request_packet, method,
-};
+use crate::protocol::{ADDR_TYPE_ETH, Packet, is_request_packet, method};
+use crate::session::Session;
 use crate::transport::{Transport, TransportError};
 use crate::{Mac, tlv};
 use std::collections::BTreeMap;
@@ -38,30 +37,32 @@ mod tlv_code {
 }
 
 pub struct Client {
-    transport: Box<dyn Transport>,
-    /// Keyed by `Mac` directly. Go keys by the string form and its
-    /// `recordDevice` comment explains the compromise; `Mac` is
-    /// `Copy + Eq + Hash`, so here it costs nothing.
+    /// The wire: transport, retries, sequence. Operations borrow this
+    /// while the caller holds a `&mut Device`, which is why it is a
+    /// separate field rather than inline state.
+    session: Session,
+    /// Discovered devices, keyed by `Mac` directly. Go keys by the string
+    /// form and its `recordDevice` comment explains the compromise; `Mac`
+    /// is `Copy + Eq + Hash`, so here it costs nothing.
+    ///
+    /// A *discovery result*, not a live mirror: operations mutate the
+    /// `Device` the caller took, not this map.
     devices: BTreeMap<Mac, Device>,
-    sequence: u16,
-    retries: usize,
 }
 
 impl Client {
     #[must_use]
     pub fn new(transport: Box<dyn Transport>) -> Self {
         Client {
-            transport,
+            session: Session::new(transport),
             devices: BTreeMap::new(),
-            sequence: 0,
-            retries: 0,
         }
     }
 
     /// Sets the number of re-transmissions beyond the initial send.
     /// `n` of 2 means three total sends.
     pub fn set_retries(&mut self, n: usize) {
-        self.retries = n;
+        self.session.set_retries(n);
     }
 
     /// The configured retry count: re-transmissions beyond each initial
@@ -69,7 +70,7 @@ impl Client {
     /// actually applied, rather than inferring it from send counts.
     #[must_use]
     pub fn retries(&self) -> usize {
-        self.retries
+        self.session.retries()
     }
 
     /// Every discovered device, ordered by MAC.
@@ -83,49 +84,18 @@ impl Client {
     /// # Errors
     /// Propagates the transport's close error.
     pub async fn close(&self) -> Result<(), TransportError> {
-        self.transport.close().await
+        self.session.close().await
     }
 
-    /// Builds a header with the next sequence number.
-    fn next_packet(&mut self, dst: Mac, ucp_method: u16, broadcast: bool) -> Packet {
-        self.sequence = self.sequence.wrapping_add(1);
-        Packet {
-            dst_broadcast: u8::from(broadcast),
-            dst_type: ADDR_TYPE_ETH,
-            dst_address: dst,
-            src_broadcast: 0,
-            src_type: ADDR_TYPE_ETH,
-            src_address: Mac::ZERO,
-            sequence: self.sequence,
-            udap_type: UDAP_TYPE_UCP,
-            ucp_flags: FLAG_REQUEST,
-            uap_class: UAP_CLASS_UCP,
-            ucp_method,
-        }
-    }
-
-    /// Sends `packet`, retransmitting `self.retries` more times.
+    /// Removes a device from the registry and hands it to the caller.
     ///
-    /// UDP send is fire-and-forget: succeeds if any attempt succeeded,
-    /// returns the first error only if every attempt failed. No delay
-    /// between sends, matching squeezeplay's triple-send.
-    async fn send_retried(&self, packet: &[u8]) -> Result<(), TransportError> {
-        let mut first_err = None;
-        let mut successes = 0usize;
-        for _ in 0..=self.retries {
-            match self.transport.send(packet).await {
-                Ok(()) => successes += 1,
-                Err(e) => {
-                    if first_err.is_none() {
-                        first_err = Some(e);
-                    }
-                }
-            }
-        }
-        match (successes, first_err) {
-            (0, Some(e)) => Err(e),
-            _ => Ok(()),
-        }
+    /// The registry is a *discovery result*, not a live mirror: nothing
+    /// in go-udap re-reads it after an operation, and operations mutate
+    /// the `Device` the caller holds. Moving the device out rather than
+    /// cloning makes that explicit — there is no second copy to fall out
+    /// of date.
+    pub fn take_device(&mut self, mac: Mac) -> Option<Device> {
+        self.devices.remove(&mac)
     }
 
     /// Broadcasts an advanced-discovery request and collects replies
@@ -140,14 +110,16 @@ impl Client {
     pub async fn discover(&mut self, cancel: &CancellationToken) -> Result<(), ClientError> {
         info!(method = "0x0009", "starting UDAP discovery");
         let packet = self
-            .next_packet(Mac::ZERO, method::ADV_DISC, true)
+            .session
+            .header(Mac::ZERO, method::ADV_DISC, true)
             .to_bytes();
-        self.send_retried(&packet)
+        self.session
+            .send_retried(&packet)
             .await
             .map_err(ClientError::Send)?;
 
         loop {
-            match self.transport.recv(cancel).await {
+            match self.session.recv(cancel).await {
                 Ok((reply, src)) => self.handle_discovery_reply(&reply, &src),
                 Err(TransportError::Cancelled) => return Ok(()),
                 Err(e) => return Err(ClientError::Recv(e)),
@@ -333,6 +305,7 @@ fn parse_discovery_response(payload: &[u8], src: &str, packet: &Packet) -> Devic
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{FLAG_REQUEST, UAP_CLASS_UCP, UDAP_TYPE_UCP};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// Pins `ClientError::NoSuchInterface`'s wording to go-udap's own
