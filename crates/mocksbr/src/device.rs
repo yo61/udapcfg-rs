@@ -30,7 +30,8 @@ pub struct DeviceConfig {
     pub uuid: [u8; 16],
     /// Fault injection: operations the device rejects with UCP 0x0007.
     ///
-    /// Two aliasing rules, both go-udap's (`mocksbr/device.go:217`):
+    /// Two aliasing rules, both go-udap's (`mocksbr/device.go:222`
+    /// and `mocksbr/handlers.go:103`):
     /// naming either [`Op::Set`] or [`Op::Save`] rejects the other, as
     /// they are one wire method; and [`Op::Discover`] makes the device
     /// skip discovery *silently* rather than answering with an error,
