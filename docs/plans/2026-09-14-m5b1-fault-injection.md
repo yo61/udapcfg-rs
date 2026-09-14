@@ -105,7 +105,7 @@ later red ambiguous.
   - `DeviceConfig.fail_message: Option<String>`
   - `pub(crate) fn Op::from_method(method: u16) -> Option<Op>`
 
-- [ ] **Step 1: Add the `Op` enum and the two fields**
+- [x] **Step 1: Add the `Op` enum and the two fields**
 
 In `crates/mocksbr/src/device.rs`:
 
@@ -173,7 +173,7 @@ On `DeviceConfig`, delete `pub error_reply: Option<String>` and add:
 
 Default both in `default_with_mac`: `fail_on: Vec::new(), fail_message: None`.
 
-- [ ] **Step 2: Check `fail_on` in the dispatch**
+- [x] **Step 2: Check `fail_on` in the dispatch**
 
 In `crates/mocksbr/src/network.rs`, replace the `error_reply` block. The
 message is built from the *requested* operation, so a device failing only
@@ -201,7 +201,7 @@ message is built from the *requested* operation, so a device failing only
 `responses::error_response` already sends no TLV for an empty message —
 that behaviour was added in M4 and is what `Some("")` relies on.
 
-- [ ] **Step 3: Rewrite the five `failing_fixture` call sites**
+- [x] **Step 3: Rewrite the five `failing_fixture` call sites**
 
 `crates/udap/tests/ops_config.rs` has one helper and four users. Replace
 the helper:
@@ -242,14 +242,14 @@ the messages are still caller-chosen, so the expected strings do not move:
 Export `Op` from the crate root so tests can name it: add
 `pub use device::Op;` to `crates/mocksbr/src/lib.rs`.
 
-- [ ] **Step 4: Run and watch the suite stay green**
+- [x] **Step 4: Run and watch the suite stay green**
 
 Run: `mise exec -- cargo test --workspace`
 Expected: all pass. **This task changes no behaviour any test asserts** —
 it changes how the fault is requested, not what it does. A failure here
 means the replacement is not equivalent.
 
-- [ ] **Step 5: Write the failing test for what `FailOn` adds**
+- [x] **Step 5: Write the failing test for what `FailOn` adds**
 
 The whole point of the replacement — per-operation precision, which
 `error_reply` could not express. `crates/udap/tests/ops_faults.rs`:
@@ -341,13 +341,13 @@ async fn failing_nothing_leaves_every_operation_working() {
 }
 ```
 
-- [ ] **Step 6: Run and watch them fail**
+- [x] **Step 6: Run and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --test ops_faults`
 Expected: `the_default_failure_message_names_the_operation` fails if the
 message is not built from the requested op.
 
-- [ ] **Step 7: Verify the gate and commit**
+- [x] **Step 7: Verify the gate and commit**
 
 ```bash
 mise exec -- cargo fmt --all --check
@@ -372,7 +372,7 @@ and the client's timeout path runs.
 - Consumes: `Op`, `fixture_with` from Task 1
 - Produces: `DeviceConfig.unreachable: bool`, `.drop_get_ip: bool`, `.drop_get_uuid: bool`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 A silent device means the operation never returns, so each test cancels
 the token to stand in for `--timeout`. Without that they would hang, and
@@ -469,12 +469,12 @@ fn discovery_request() -> Vec<u8> {
 }
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --test ops_faults`
 Expected: compile error — the fields do not exist.
 
-- [ ] **Step 3: Add the fields and the checks**
+- [x] **Step 3: Add the fields and the checks**
 
 Three `bool` fields on `DeviceConfig`, all defaulting to `false`:
 
@@ -507,12 +507,12 @@ The `Drop` pair lives in the method match, returning `None`:
 Place both arms **above** the corresponding reply arms; a match arm order
 mistake here silently disables the knob.
 
-- [ ] **Step 4: Run and watch them pass**
+- [x] **Step 4: Run and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --test ops_faults`
 Expected: 7 passed (3 from Task 1, 4 new).
 
-- [ ] **Step 5: Mutation-check the precedence**
+- [x] **Step 5: Mutation-check the precedence**
 
 Move the `unreachable` filter *after* the addressing filter: no test
 should change, because both filters are conjunctive — confirming the
@@ -520,7 +520,7 @@ placement is about clarity, not behaviour. Then delete it entirely:
 `an_unreachable_device_answers_nothing` must fail. Verify each edit
 landed before believing the result.
 
-- [ ] **Step 6: Verify the gate and commit**
+- [x] **Step 6: Verify the gate and commit**
 
 ```bash
 mise exec -- cargo fmt --all --check
@@ -547,7 +547,7 @@ arrays — never against a device producing them.
 - Consumes: `fixture_with` from Task 1
 - Produces: `pub enum Malformed { None, OversizedCount, LengthExceedsPayload, UnknownMethod }`, `DeviceConfig.malformed: Malformed`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[tokio::test]
@@ -618,12 +618,12 @@ async fn a_well_formed_device_decodes_cleanly() {
 
 Import `Malformed` in the test file's `use mocksbr::{...}` list.
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --test ops_faults`
 Expected: compile error — `Malformed` does not exist.
 
-- [ ] **Step 3: Add the enum and the field**
+- [x] **Step 3: Add the enum and the field**
 
 ```rust
 /// A deliberately broken reply shape, for exercising the client's
@@ -647,7 +647,7 @@ pub enum Malformed {
 On `DeviceConfig`: `pub malformed: Malformed,` defaulting to
 `Malformed::None`.
 
-- [ ] **Step 4: Apply it in `get_data_response`**
+- [x] **Step 4: Apply it in `get_data_response`**
 
 The method substitution happens when the header is built; the payload
 shapes replace the item list. Both are `get_data`-only — go-udap applies
@@ -679,18 +679,18 @@ shapes replace the item list. Both are `get_data`-only — go-udap applies
 `UnknownMethod` falls through to the normal payload — only the method
 differs, so the client rejects it before decoding.
 
-- [ ] **Step 5: Run and watch them pass**
+- [x] **Step 5: Run and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --test ops_faults`
 Expected: 11 passed.
 
-- [ ] **Step 6: Mutation-check that the modes are distinct**
+- [x] **Step 6: Mutation-check that the modes are distinct**
 
 Make `OversizedCount` emit the `LengthExceedsPayload` shape: the first
 test must fail while the second still passes. If both pass, the two
 tests are not distinguishing the modes and one of them is redundant.
 
-- [ ] **Step 7: Verify the gate and commit**
+- [x] **Step 7: Verify the gate and commit**
 
 ```bash
 mise exec -- cargo fmt --all --check
@@ -717,7 +717,7 @@ having no consumer; it has one now.
   - `DeviceConfig.nvram: BTreeMap<String, Vec<u8>>`
   - `pub(crate) fn DeviceState::factory_with(seed: &BTreeMap<String, Vec<u8>>) -> Self`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[tokio::test]
@@ -787,12 +787,12 @@ async fn a_seed_reaches_nvram_so_a_reset_reloads_it() {
 }
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 Run: `mise exec -- cargo test -p udap --test ops_faults`
 Expected: compile error — `DeviceConfig` has no `nvram` field.
 
-- [ ] **Step 3: Add the field and the seeded constructor**
+- [x] **Step 3: Add the field and the seeded constructor**
 
 On `DeviceConfig`:
 
@@ -827,19 +827,19 @@ than unconditionally from factory:
         let state = devices.iter().map(|c| DeviceState::factory_with(&c.nvram)).collect();
 ```
 
-- [ ] **Step 4: Run and watch them pass**
+- [x] **Step 4: Run and watch them pass**
 
 Run: `mise exec -- cargo test -p udap --test ops_faults`
 Expected: 14 passed.
 
-- [ ] **Step 5: Mutation-check that the seed reaches NVRAM**
+- [x] **Step 5: Mutation-check that the seed reaches NVRAM**
 
 Make `factory_with` seed only `working` and not `nvram`:
 `a_seed_reaches_nvram_so_a_reset_reloads_it` must fail while the other
 two still pass. That is the assertion distinguishing "seeded the running
 config" from "seeded what survives a reboot".
 
-- [ ] **Step 6: Verify the gate and commit**
+- [x] **Step 6: Verify the gate and commit**
 
 ```bash
 mise exec -- cargo fmt --all --check
