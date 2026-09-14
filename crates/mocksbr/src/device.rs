@@ -37,6 +37,14 @@ pub struct DeviceConfig {
     /// is a distinct client path (`OpError::DeviceNoMessage`) that
     /// go-udap has no way to produce and does not test.
     pub fail_message: Option<String>,
+    /// Fault injection: the device answers nothing at all, including
+    /// discovery. Models a device that is off the network, as distinct
+    /// from `fail_on`, which models one that refuses a request.
+    pub unreachable: bool,
+    /// Fault injection: `get_ip` requests get no reply.
+    pub drop_get_ip: bool,
+    /// Fault injection: `get_uuid` requests get no reply.
+    pub drop_get_uuid: bool,
 }
 
 impl DeviceConfig {
@@ -63,6 +71,9 @@ impl DeviceConfig {
             ],
             fail_on: Vec::new(),
             fail_message: None,
+            unreachable: false,
+            drop_get_ip: false,
+            drop_get_uuid: false,
         }
     }
 }

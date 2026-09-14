@@ -34,6 +34,27 @@ fn fixture_with(configure: impl FnOnce(&mut DeviceConfig)) -> (Session, Device) 
     (session, device)
 }
 
+/// A well-formed advanced-discovery request, for tests that drive
+/// `Network::receive` directly rather than through a client.
+fn discovery_request() -> Vec<u8> {
+    use udap::protocol::{ADDR_TYPE_ETH, FLAG_REQUEST, UAP_CLASS_UCP, UDAP_TYPE_UCP, method};
+    udap::Packet {
+        dst_broadcast: 1,
+        dst_type: ADDR_TYPE_ETH,
+        dst_address: Mac::ZERO,
+        src_broadcast: 0,
+        src_type: ADDR_TYPE_ETH,
+        src_address: Mac::ZERO,
+        sequence: 1,
+        udap_type: UDAP_TYPE_UCP,
+        ucp_flags: FLAG_REQUEST,
+        uap_class: UAP_CLASS_UCP,
+        ucp_method: method::ADV_DISC,
+    }
+    .to_bytes()
+    .to_vec()
+}
+
 #[tokio::test]
 async fn fail_on_selects_a_single_operation() {
     // What error_reply could not express: one operation fails while its
@@ -81,4 +102,65 @@ async fn failing_nothing_leaves_every_operation_working() {
         &device
     ))
     .expect("no failure configured");
+}
+
+#[tokio::test]
+async fn an_unreachable_device_answers_nothing() {
+    let (session, device) = fixture_with(|cfg| cfg.unreachable = true);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    let err = within!(ops::getip::get_ip(&session, &cancel, &device))
+        .expect_err("an unreachable device never replies");
+    assert!(
+        matches!(err, udap::OpError::Recv(_)),
+        "the wait ends by cancellation, not by a device error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_device_is_not_discoverable() {
+    // Unreachable means unreachable: unlike fail_on, it suppresses the
+    // discovery reply too, because the device is off the network rather
+    // than refusing a request.
+    let mut cfg = DeviceConfig::default_with_mac(Mac::from_bytes(MAC));
+    cfg.unreachable = true;
+    let network = Network::new(vec![cfg]);
+    assert!(
+        network.receive(&discovery_request()).is_empty(),
+        "an unreachable device must not answer discovery"
+    );
+}
+
+#[tokio::test]
+async fn drop_get_ip_silences_only_get_ip() {
+    let (session, device) = fixture_with(|cfg| cfg.drop_get_ip = true);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    within!(ops::getip::get_ip(&session, &cancel, &device)).expect_err("get_ip is dropped");
+
+    // A fresh token: the first is already cancelled.
+    within!(ops::getuuid::get_uuid(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ))
+    .expect("get_uuid is unaffected");
+}
+
+#[tokio::test]
+async fn drop_get_uuid_silences_only_get_uuid() {
+    let (session, device) = fixture_with(|cfg| cfg.drop_get_uuid = true);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    within!(ops::getuuid::get_uuid(&session, &cancel, &device)).expect_err("get_uuid is dropped");
+
+    within!(ops::getip::get_ip(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ))
+    .expect("get_ip is unaffected");
 }

@@ -75,6 +75,9 @@ impl Network {
         self.devices
             .iter()
             .enumerate()
+            // Off the network entirely: this is the only knob that also
+            // suppresses discovery.
+            .filter(|(_, cfg)| !cfg.unreachable)
             .filter(|(_, cfg)| {
                 request.ucp_method == method::ADV_DISC || request.dst_address == cfg.mac
             })
@@ -102,6 +105,10 @@ impl Network {
                 }
                 let reply = match request.ucp_method {
                     method::ADV_DISC => responses::discovery_response(&request, cfg),
+                    // Above the reply arms: an ordering mistake here
+                    // silently disables the knob.
+                    method::GET_IP if cfg.drop_get_ip => return None,
+                    method::GET_UUID if cfg.drop_get_uuid => return None,
                     method::GET_IP => responses::get_ip_response(&request, cfg),
                     method::GET_UUID => responses::get_uuid_response(&request, cfg),
                     method::GET_DATA => {
