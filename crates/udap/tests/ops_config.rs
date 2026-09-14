@@ -190,11 +190,15 @@ async fn reset_refuses_a_device_with_no_mac() {
     );
 }
 
-/// A device that answers every directed request with an error reply.
-fn failing_fixture(message: &str) -> (Session, Device) {
+/// A device that rejects `ops` with `message`.
+///
+/// An empty `message` sends an error reply with no TLV, which is a
+/// distinct client path from one carrying an explanation.
+fn failing_fixture(ops: &[mocksbr::Op], message: &str) -> (Session, Device) {
     let mac = Mac::from_bytes(MAC);
     let mut cfg = DeviceConfig::default_with_mac(mac);
-    cfg.error_reply = Some(message.to_owned());
+    cfg.fail_on = ops.to_vec();
+    cfg.fail_message = Some(message.to_owned());
     let session = Session::new(Box::new(MockTransport::new(Arc::new(Network::new(vec![
         cfg,
     ])))));
@@ -210,7 +214,7 @@ async fn get_reports_an_error_reply_without_decoding_its_message() {
     // Deliberately unlike get_ip: go-udap's get does not read the
     // error-message TLV, so the message is dropped even when present.
     // Carried forward rather than improved.
-    let (session, device) = failing_fixture("no such offset");
+    let (session, device) = failing_fixture(&[mocksbr::Op::Get], "no such offset");
     let err = within!(ops::config::get(
         &session,
         &CancellationToken::new(),
@@ -227,7 +231,7 @@ async fn get_reports_an_error_reply_without_decoding_its_message() {
 
 #[tokio::test]
 async fn reset_reports_the_devices_reason_for_refusing() {
-    let (session, device) = failing_fixture("locked");
+    let (session, device) = failing_fixture(&[mocksbr::Op::Reset], "locked");
     let err = within!(ops::config::reset(
         &session,
         &CancellationToken::new(),
@@ -243,7 +247,7 @@ async fn reset_reports_the_devices_reason_for_refusing() {
 
 #[tokio::test]
 async fn reset_reports_a_refusal_with_no_explanation() {
-    let (session, device) = failing_fixture("");
+    let (session, device) = failing_fixture(&[mocksbr::Op::Reset], "");
     let err = within!(ops::config::reset(
         &session,
         &CancellationToken::new(),
@@ -424,7 +428,7 @@ async fn set_does_not_record_a_value_the_device_never_acknowledged() {
     // The commit barrier. go-udap moved this merge after the ack because
     // doing it earlier left parameters advertising values that were
     // never persisted when the round trip failed.
-    let (session, mut device) = failing_fixture("locked");
+    let (session, mut device) = failing_fixture(&[mocksbr::Op::Set], "locked");
     device
         .parameters
         .insert("wireless_channel".to_owned(), b"6".to_vec());

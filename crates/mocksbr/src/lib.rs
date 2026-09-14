@@ -10,6 +10,6 @@ mod state;
 pub mod transport;
 mod wire;
 
-pub use device::DeviceConfig;
+pub use device::{DeviceConfig, Op};
 pub use network::Network;
 pub use transport::MockTransport;

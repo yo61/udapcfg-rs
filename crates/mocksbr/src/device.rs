@@ -28,13 +28,15 @@ pub struct DeviceConfig {
     pub gateway: Ipv4Addr,
     /// Reported by `get_uuid` as TLV 0x0d. Sixteen bytes.
     pub uuid: [u8; 16],
-    /// Fault injection: when set, every directed request is answered
-    /// with UCP 0x0007 instead of the operation's own reply.
+    /// Fault injection: operations the device rejects with UCP 0x0007.
+    pub fail_on: Vec<Op>,
+    /// The rejection message.
     ///
-    /// `Some(text)` carries an error-message TLV; `Some("")` answers with
-    /// no TLV at all, which is a distinct path in every operation that
-    /// handles an error reply.
-    pub error_reply: Option<String>,
+    /// `None` uses go-udap's `mocksbr: configured to fail <op>`.
+    /// `Some("")` sends an error reply carrying **no** TLV at all, which
+    /// is a distinct client path (`OpError::DeviceNoMessage`) that
+    /// go-udap has no way to produce and does not test.
+    pub fail_message: Option<String>,
 }
 
 impl DeviceConfig {
@@ -59,7 +61,54 @@ impl DeviceConfig {
                 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
                 0x32, 0x10,
             ],
-            error_reply: None,
+            fail_on: Vec::new(),
+            fail_message: None,
+        }
+    }
+}
+
+/// A UDAP operation, for the failure-injection knobs.
+///
+/// `Set` and `Save` are the same wire method (0x0006) — a real device
+/// does both on one request — so `from_method` reports `Set`, and a
+/// config naming `Save` alone has no effect. Both variants exist to
+/// match go-udap's surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Op {
+    Discover,
+    Get,
+    Set,
+    Save,
+    Reset,
+    GetIp,
+    GetUuid,
+}
+
+impl Op {
+    /// The operation a UCP method denotes, if this mock models it.
+    pub(crate) fn from_method(method: u16) -> Option<Op> {
+        use udap::protocol::method;
+        match method {
+            method::ADV_DISC => Some(Op::Discover),
+            method::GET_DATA => Some(Op::Get),
+            method::SET_DATA => Some(Op::Set),
+            method::RESET => Some(Op::Reset),
+            method::GET_IP => Some(Op::GetIp),
+            method::GET_UUID => Some(Op::GetUuid),
+            _ => None,
+        }
+    }
+
+    /// The name go-udap uses in its failure message.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Op::Discover => "discover",
+            Op::Get => "get",
+            Op::Set => "set",
+            Op::Save => "save",
+            Op::Reset => "reset",
+            Op::GetIp => "getip",
+            Op::GetUuid => "getuuid",
         }
     }
 }

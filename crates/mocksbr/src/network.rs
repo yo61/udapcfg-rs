@@ -1,6 +1,6 @@
 //! A network of virtual devices that a `MockTransport` can drive.
 
-use crate::device::DeviceConfig;
+use crate::device::{DeviceConfig, Op};
 use crate::responses;
 use crate::state::DeviceState;
 use crate::wire;
@@ -79,14 +79,24 @@ impl Network {
                 request.ucp_method == method::ADV_DISC || request.dst_address == cfg.mac
             })
             .filter_map(|(index, cfg)| {
-                // Fault injection short-circuits the operation's own
+                // Failure injection short-circuits the operation's own
                 // reply, but not discovery: a device that cannot answer
                 // get_data is still discoverable.
-                if let Some(message) = &cfg.error_reply
-                    && request.ucp_method != method::ADV_DISC
+                //
+                // The message names the *requested* operation, so a
+                // device failing only get_ip never claims to have
+                // failed a reset.
+                let op = Op::from_method(request.ucp_method);
+                if let Some(op) = op
+                    && op != Op::Discover
+                    && cfg.fail_on.contains(&op)
                 {
+                    let message = cfg
+                        .fail_message
+                        .clone()
+                        .unwrap_or_else(|| format!("mocksbr: configured to fail {}", op.as_str()));
                     return Some((
-                        responses::error_response(&request, cfg, message),
+                        responses::error_response(&request, cfg, &message),
                         cfg.mac.to_string(),
                     ));
                 }
