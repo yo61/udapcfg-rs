@@ -2,6 +2,10 @@
 //! committed wire captures stay valid.
 
 use crate::device::{DeviceConfig, Malformed};
+
+/// The UCP method `Malformed::UnknownMethod` replies under. Not a real
+/// method; go-udap hardcodes the same value (`mocksbr/responses.go`).
+const UNRECOGNISED_METHOD: u16 = 0x9999;
 use crate::state::DeviceState;
 use udap::protocol::{ADDR_TYPE_ETH, Packet, UAP_CLASS_UCP, UDAP_TYPE_UCP};
 use udap::tlv;
@@ -79,7 +83,7 @@ pub fn get_data_response(
     // UnknownMethod changes only the header, so the client rejects the
     // reply before it ever decodes the payload.
     let method = if cfg.malformed == Malformed::UnknownMethod {
-        0x9999
+        UNRECOGNISED_METHOD
     } else {
         request.ucp_method
     };

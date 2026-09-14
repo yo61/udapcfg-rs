@@ -1,6 +1,7 @@
 //! The fault-injection knobs, driven through the real client.
 
 use mocksbr::{DeviceConfig, Malformed, MockTransport, Network, Op};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -309,5 +310,49 @@ async fn a_seed_reaches_nvram_so_a_reset_reloads_it() {
     assert_eq!(
         values.get("wireless_channel").map(Vec::as_slice),
         Some(b"9".as_slice())
+    );
+}
+
+#[tokio::test]
+async fn fail_on_discover_skips_the_device_from_discovery() {
+    // go-udap's TestFailOnDiscoverDevicesAreSkipped. Discovery is a
+    // broadcast, so there is no requester to send an error back to: the
+    // device stays silent instead of replying with 0x0007.
+    let ok = DeviceConfig::default_with_mac(Mac::from_bytes(MAC));
+    let mut bad =
+        DeviceConfig::default_with_mac(Mac::from_bytes([0x00, 0x04, 0x20, 0x16, 0x17, 0x19]));
+    bad.fail_on = vec![Op::Discover];
+    let network = Network::new(vec![ok, bad]);
+
+    let replies = network.receive(&discovery_request());
+    assert_eq!(
+        replies.len(),
+        1,
+        "the fail-on-discover device must be skipped, not answered with an error"
+    );
+    assert_eq!(replies[0].1, "00:04:20:16:17:18");
+}
+
+#[tokio::test]
+async fn naming_save_in_fail_on_also_rejects_a_set() {
+    // go-udap's failsOn aliases Set and Save in both directions, because
+    // they are the same wire method (0x0006).
+    let (session, mut device) = fixture_with(|cfg| {
+        cfg.fail_on = vec![Op::Save];
+        cfg.fail_message = Some("locked".to_owned());
+    });
+    let mut updates = BTreeMap::new();
+    updates.insert("wireless_channel".to_owned(), b"11".to_vec());
+
+    let err = within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &updates
+    ))
+    .expect_err("naming Save must reject a Set");
+    assert!(
+        err.to_string().contains("locked"),
+        "expected the configured rejection, got: {err}"
     );
 }

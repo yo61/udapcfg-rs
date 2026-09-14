@@ -4,8 +4,7 @@ use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 use udap::Mac;
 
-/// Per-device configuration. This is the M2 subset; fault-injection
-/// knobs arrive with the full mocksbr port.
+/// Per-device configuration, including the fault-injection knobs.
 #[derive(Debug, Clone)]
 pub struct DeviceConfig {
     pub mac: Mac,
@@ -30,6 +29,12 @@ pub struct DeviceConfig {
     /// Reported by `get_uuid` as TLV 0x0d. Sixteen bytes.
     pub uuid: [u8; 16],
     /// Fault injection: operations the device rejects with UCP 0x0007.
+    ///
+    /// Two aliasing rules, both go-udap's (`mocksbr/device.go:217`):
+    /// naming either [`Op::Set`] or [`Op::Save`] rejects the other, as
+    /// they are one wire method; and [`Op::Discover`] makes the device
+    /// skip discovery *silently* rather than answering with an error,
+    /// because a broadcast has no requester to reply to.
     pub fail_on: Vec<Op>,
     /// The rejection message.
     ///
@@ -57,6 +62,27 @@ pub struct DeviceConfig {
 }
 
 impl DeviceConfig {
+    /// Whether `op` is configured to fail.
+    ///
+    /// Ports go-udap's `failsOn` (`mocksbr/device.go:217`), including
+    /// its two-way `Set`/`Save` alias: they are one wire method, so
+    /// naming either rejects both. `from_method` never yields `Save`,
+    /// so only the `Set`-requested direction is reachable over the
+    /// wire; the other is kept because the Go has it.
+    pub(crate) fn fails_on(&self, op: Op) -> bool {
+        for configured in &self.fail_on {
+            if *configured == op {
+                return true;
+            }
+            if (op == Op::Set && *configured == Op::Save)
+                || (op == Op::Save && *configured == Op::Set)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Builds a device with go-udap's mocksbr defaults.
     #[must_use]
     pub fn default_with_mac(mac: Mac) -> Self {
@@ -92,9 +118,8 @@ impl DeviceConfig {
 /// A UDAP operation, for the failure-injection knobs.
 ///
 /// `Set` and `Save` are the same wire method (0x0006) — a real device
-/// does both on one request — so `from_method` reports `Set`, and a
-/// config naming `Save` alone has no effect. Both variants exist to
-/// match go-udap's surface.
+/// does both on one request — so `from_method` reports `Set`, and
+/// [`DeviceConfig::fails_on`] treats the two as aliases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Discover,
