@@ -107,3 +107,33 @@ async fn a_directed_request_names_the_device_it_is_for() {
     ))
     .expect("the addressed device answers");
 }
+
+#[tokio::test]
+async fn get_ip_refuses_a_device_with_no_mac() {
+    let session = session_for(&[Mac::from_bytes([0x00, 0x04, 0x20, 0x16, 0x17, 0x18])]);
+    let err = within!(ops::getip::get_ip(
+        &session,
+        &CancellationToken::new(),
+        &Device::default()
+    ))
+    .expect_err("a zero MAC cannot be addressed");
+    assert_eq!(
+        err.to_string(),
+        "cannot build GetIP packet: device has zero MAC address"
+    );
+}
+
+#[tokio::test]
+async fn get_uuid_refuses_a_device_with_no_mac() {
+    let session = session_for(&[Mac::from_bytes([0x00, 0x04, 0x20, 0x16, 0x17, 0x18])]);
+    let err = within!(ops::getuuid::get_uuid(
+        &session,
+        &CancellationToken::new(),
+        &Device::default()
+    ))
+    .expect_err("a zero MAC cannot be addressed");
+    assert_eq!(
+        err.to_string(),
+        "cannot build GetUUID packet: device has zero MAC address"
+    );
+}

@@ -6,6 +6,7 @@
 //! plus `&mut Client.devices[..]` is two overlapping borrows. `Client`
 //! wraps each of these so call sites still read like go-udap's.
 
+pub mod config;
 pub mod getip;
 pub mod getuuid;
 
@@ -23,8 +24,31 @@ pub enum OpError {
     Recv(#[source] TransportError),
     #[error("build packet: {0}")]
     Encode(#[from] crate::error::EncodeError),
-    #[error("decode response: {0}")]
-    Decode(#[from] crate::error::GetDataError),
+    /// A `get_data` reply that would not decode.
+    ///
+    /// Names the device, matching go-udap's
+    /// `decode GetData response from %s: %w`.
+    #[error("decode GetData response from {mac}: {source}")]
+    Decode {
+        mac: String,
+        #[source]
+        source: crate::error::GetDataError,
+    },
+    /// A device that refused a reset, with its explanation.
+    ///
+    /// Distinct wording from [`OpError::Device`]: go-udap says "rejected
+    /// reset" here and "error" elsewhere. Carried forward rather than
+    /// unified.
+    #[error("device {mac} rejected reset: {message}")]
+    ResetRejected { mac: String, message: String },
+    /// A device that refused a reset without saying why.
+    #[error("device {mac} rejected reset")]
+    ResetRejectedNoMessage { mac: String },
+    /// A request that cannot be built.
+    ///
+    /// go-udap: `cannot build GetData packet: device has zero MAC address`.
+    #[error("cannot build {operation} packet: device has zero MAC address")]
+    ZeroMac { operation: &'static str },
     /// The device answered with UCP method 0x0007 and an error TLV.
     ///
     /// Text is fidelity-contract: go-udap formats this as
@@ -45,7 +69,7 @@ pub enum OpError {
 }
 
 /// Error-message TLV code, per `Net::UDAP` `Constant.pm`.
-const TLV_ERROR_MESSAGE: u8 = 0x03;
+pub(crate) const TLV_ERROR_MESSAGE: u8 = 0x03;
 
 /// Maps a non-success reply method onto the matching [`OpError`].
 ///

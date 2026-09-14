@@ -30,6 +30,7 @@ fn parse_response(data: &[u8]) -> Result<String, OpError> {
 /// Queries a device's UUID, hex-encoded.
 ///
 /// # Errors
+/// [`OpError::ZeroMac`] if the device has no MAC,
 /// [`OpError::Send`] or [`OpError::Recv`] on transport failure,
 /// [`OpError::MissingUuid`] if the reply carries no UUID TLV, or one of
 /// the device-reply variants if the device answers with anything but
@@ -39,6 +40,11 @@ pub async fn get_uuid(
     cancel: &CancellationToken,
     device: &Device,
 ) -> Result<String, OpError> {
+    if device.mac.is_zero() {
+        return Err(OpError::ZeroMac {
+            operation: "GetUUID",
+        });
+    }
     let packet = session
         .header(device.mac, method::GET_UUID, false)
         .to_bytes();

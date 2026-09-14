@@ -28,6 +28,13 @@ pub struct DeviceConfig {
     pub gateway: Ipv4Addr,
     /// Reported by `get_uuid` as TLV 0x0d. Sixteen bytes.
     pub uuid: [u8; 16],
+    /// Fault injection: when set, every directed request is answered
+    /// with UCP 0x0007 instead of the operation's own reply.
+    ///
+    /// `Some(text)` carries an error-message TLV; `Some("")` answers with
+    /// no TLV at all, which is a distinct path in every operation that
+    /// handles an error reply.
+    pub error_reply: Option<String>,
 }
 
 impl DeviceConfig {
@@ -52,6 +59,7 @@ impl DeviceConfig {
                 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
                 0x32, 0x10,
             ],
+            error_reply: None,
         }
     }
 }

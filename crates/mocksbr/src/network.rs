@@ -38,27 +38,42 @@ impl Network {
 
     /// Handles one request, returning every reply it provokes.
     ///
-    /// M2 answers advanced discovery only; other methods produce no
-    /// reply, which is also how a real device behaves when it does not
-    /// recognise a request.
+    /// Answers advanced discovery, `get_ip`, `get_uuid`, `get_data` and
+    /// `reset`. Anything else produces no reply, which is also how a real
+    /// device behaves when it does not recognise a request.
     #[must_use]
     pub fn receive(&self, packet: &[u8]) -> Vec<(Vec<u8>, String)> {
-        let Ok((request, _payload)) = Packet::from_bytes(packet) else {
+        let Ok((request, payload)) = Packet::from_bytes(packet) else {
             return Vec::new();
         };
         // Discovery is a broadcast: every device answers. The directed
         // operations answer only if the request names them, matching a
         // real device ignoring traffic addressed elsewhere.
-        let build: fn(&Packet, &DeviceConfig) -> Vec<u8> = match request.ucp_method {
-            method::ADV_DISC => responses::discovery_response,
-            method::GET_IP => responses::get_ip_response,
-            method::GET_UUID => responses::get_uuid_response,
-            _ => return Vec::new(),
-        };
         self.devices
             .iter()
             .filter(|cfg| request.ucp_method == method::ADV_DISC || request.dst_address == cfg.mac)
-            .map(|cfg| (build(&request, cfg), cfg.mac.to_string()))
+            .filter_map(|cfg| {
+                // Fault injection short-circuits the operation's own
+                // reply, but not discovery: a device that cannot answer
+                // get_data is still discoverable.
+                if let Some(message) = &cfg.error_reply
+                    && request.ucp_method != method::ADV_DISC
+                {
+                    return Some((
+                        responses::error_response(&request, cfg, message),
+                        cfg.mac.to_string(),
+                    ));
+                }
+                let reply = match request.ucp_method {
+                    method::ADV_DISC => responses::discovery_response(&request, cfg),
+                    method::GET_IP => responses::get_ip_response(&request, cfg),
+                    method::GET_UUID => responses::get_uuid_response(&request, cfg),
+                    method::GET_DATA => responses::get_data_response(&request, cfg, payload),
+                    method::RESET => responses::reset_response(&request, cfg),
+                    _ => return None,
+                };
+                Some((reply, cfg.mac.to_string()))
+            })
             .collect()
     }
 }
