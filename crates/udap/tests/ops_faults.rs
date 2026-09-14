@@ -228,3 +228,69 @@ async fn a_well_formed_device_decodes_cleanly() {
     ))
     .expect("a well-formed reply decodes");
 }
+
+#[tokio::test]
+async fn a_seeded_device_reports_the_seeded_value() {
+    let (session, device) = fixture_with(|cfg| {
+        cfg.nvram
+            .insert("wireless_channel".to_owned(), b"9".to_vec());
+    });
+    let values = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["wireless_channel"]
+    ))
+    .expect("get succeeds");
+    assert_eq!(
+        values.get("wireless_channel").map(Vec::as_slice),
+        Some(b"9".as_slice()),
+        "the seed must override the factory default"
+    );
+}
+
+#[tokio::test]
+async fn seeding_one_parameter_leaves_the_rest_at_factory() {
+    let (session, device) = fixture_with(|cfg| {
+        cfg.nvram
+            .insert("wireless_channel".to_owned(), b"9".to_vec());
+    });
+    let values = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["wireless_region_id"]
+    ))
+    .expect("get succeeds");
+    assert_eq!(
+        values.get("wireless_region_id").map(Vec::as_slice),
+        Some(b"4".as_slice())
+    );
+}
+
+#[tokio::test]
+async fn a_seed_reaches_nvram_so_a_reset_reloads_it() {
+    // The seed is the device's persisted state, not merely its working
+    // memory: a reset must find it still there.
+    let (session, device) = fixture_with(|cfg| {
+        cfg.nvram
+            .insert("wireless_channel".to_owned(), b"9".to_vec());
+    });
+    within!(ops::config::reset(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ))
+    .expect("reset succeeds");
+    let values = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["wireless_channel"]
+    ))
+    .expect("get succeeds");
+    assert_eq!(
+        values.get("wireless_channel").map(Vec::as_slice),
+        Some(b"9".as_slice())
+    );
+}

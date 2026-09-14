@@ -1,5 +1,6 @@
 //! One virtual Squeezebox Receiver.
 
+use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 use udap::Mac;
 
@@ -47,6 +48,12 @@ pub struct DeviceConfig {
     pub drop_get_uuid: bool,
     /// Fault injection: a deliberately broken `get_data` reply.
     pub malformed: Malformed,
+    /// NVRAM values overriding the factory defaults.
+    ///
+    /// Seeds **both** tiers, so a device starts as though it had been
+    /// configured and saved — a reset reloads these, not the factory
+    /// table.
+    pub nvram: BTreeMap<String, Vec<u8>>,
 }
 
 impl DeviceConfig {
@@ -77,6 +84,7 @@ impl DeviceConfig {
             drop_get_ip: false,
             drop_get_uuid: false,
             malformed: Malformed::None,
+            nvram: BTreeMap::new(),
         }
     }
 }

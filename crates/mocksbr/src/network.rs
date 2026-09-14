@@ -23,7 +23,10 @@ pub struct Network {
 impl Network {
     #[must_use]
     pub fn new(devices: Vec<DeviceConfig>) -> Self {
-        let state = devices.iter().map(|_| DeviceState::factory()).collect();
+        let state = devices
+            .iter()
+            .map(|cfg| DeviceState::factory_with(&cfg.nvram))
+            .collect();
         Network {
             devices,
             state: Mutex::new(state),
@@ -48,7 +51,10 @@ impl Network {
                 cfg
             })
             .collect::<Vec<DeviceConfig>>();
-        let state = devices.iter().map(|_| DeviceState::factory()).collect();
+        let state = devices
+            .iter()
+            .map(|cfg| DeviceState::factory_with(&cfg.nvram))
+            .collect();
         Network {
             devices,
             state: Mutex::new(state),
