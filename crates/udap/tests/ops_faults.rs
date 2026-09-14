@@ -18,6 +18,26 @@ macro_rules! within {
     };
 }
 
+/// Asserts an operation never completes, because the device is silent.
+///
+/// Pair with `#[tokio::test(start_paused = true)]`: with nothing left to
+/// run, the runtime advances virtual time to the deadline, so this is
+/// instant.
+///
+/// Why not a pre-cancelled token? `MockTransport::recv` selects over the
+/// cancellation and the queued reply *without* `biased`, so when a reply
+/// exists both branches are ready and the winner is random. A test built
+/// that way passes whether or not the device stayed silent — measured at
+/// a 70% catch rate against a mutant that removed the suppression. Here
+/// a reply resolves the future immediately and fails the assertion.
+macro_rules! silent {
+    ($fut:expr) => {
+        tokio::time::timeout(Duration::from_secs(5), $fut)
+            .await
+            .expect_err("a silent device must not produce a reply")
+    };
+}
+
 const MAC: [u8; 6] = [0x00, 0x04, 0x20, 0x16, 0x17, 0x18];
 
 fn fixture_with(configure: impl FnOnce(&mut DeviceConfig)) -> (Session, Device) {
@@ -104,18 +124,14 @@ async fn failing_nothing_leaves_every_operation_working() {
     .expect("no failure configured");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_unreachable_device_answers_nothing() {
     let (session, device) = fixture_with(|cfg| cfg.unreachable = true);
-    let cancel = CancellationToken::new();
-    cancel.cancel();
-
-    let err = within!(ops::getip::get_ip(&session, &cancel, &device))
-        .expect_err("an unreachable device never replies");
-    assert!(
-        matches!(err, udap::OpError::Recv(_)),
-        "the wait ends by cancellation, not by a device error: {err}"
-    );
+    silent!(ops::getip::get_ip(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ));
 }
 
 #[tokio::test]
@@ -132,15 +148,15 @@ async fn an_unreachable_device_is_not_discoverable() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn drop_get_ip_silences_only_get_ip() {
     let (session, device) = fixture_with(|cfg| cfg.drop_get_ip = true);
-    let cancel = CancellationToken::new();
-    cancel.cancel();
+    silent!(ops::getip::get_ip(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ));
 
-    within!(ops::getip::get_ip(&session, &cancel, &device)).expect_err("get_ip is dropped");
-
-    // A fresh token: the first is already cancelled.
     within!(ops::getuuid::get_uuid(
         &session,
         &CancellationToken::new(),
@@ -149,13 +165,14 @@ async fn drop_get_ip_silences_only_get_ip() {
     .expect("get_uuid is unaffected");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn drop_get_uuid_silences_only_get_uuid() {
     let (session, device) = fixture_with(|cfg| cfg.drop_get_uuid = true);
-    let cancel = CancellationToken::new();
-    cancel.cancel();
-
-    within!(ops::getuuid::get_uuid(&session, &cancel, &device)).expect_err("get_uuid is dropped");
+    silent!(ops::getuuid::get_uuid(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ));
 
     within!(ops::getip::get_ip(
         &session,
