@@ -499,3 +499,131 @@ async fn set_caches_a_name_it_never_sent() {
         "yet it is cached: the wart this test documents"
     );
 }
+
+#[tokio::test]
+async fn a_set_is_visible_to_a_later_get() {
+    // The point of a stateful mock: until now the device discarded
+    // writes and always answered with factory defaults, so nothing
+    // could catch a set that encoded wrongly.
+    let (session, mut device) = fixture();
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ))
+    .expect("set succeeds");
+
+    let values = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["wireless_channel"]
+    ))
+    .expect("get succeeds");
+
+    assert_eq!(
+        values.get("wireless_channel").map(Vec::as_slice),
+        Some(b"11".as_slice()),
+        "the device must report what was written, not the factory default"
+    );
+}
+
+#[tokio::test]
+async fn a_set_does_not_disturb_neighbouring_parameters() {
+    let (session, mut device) = fixture();
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ))
+    .expect("set succeeds");
+
+    let values = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["wireless_region_id"]
+    ))
+    .expect("get succeeds");
+
+    assert_eq!(
+        values.get("wireless_region_id").map(Vec::as_slice),
+        Some(b"4".as_slice()),
+        "the read-modify-write must have preserved this"
+    );
+}
+
+#[tokio::test]
+async fn a_non_utf8_value_round_trips_byte_exact() {
+    // ADR-6 end to end: client -> wire -> device state -> wire -> client.
+    let (session, mut device) = fixture();
+    let ssid = vec![0xffu8, 0xfe, 0x41];
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_SSID", &ssid)
+    ))
+    .expect("set succeeds");
+
+    let values = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["wireless_SSID"]
+    ))
+    .expect("get succeeds");
+
+    assert_eq!(
+        values.get("wireless_SSID").map(Vec::as_slice),
+        Some(ssid.as_slice()),
+        "a non-UTF-8 SSID must survive the full round trip unchanged"
+    );
+}
+
+#[tokio::test]
+async fn reset_restores_the_saved_values() {
+    // mocksbr saves on every set, matching go-udap, so a reset reloads
+    // the most recent write rather than the factory default.
+    //
+    // Know what this can and cannot catch. It fails if reset restores
+    // factory defaults -- the plausible wrong implementation. It does
+    // NOT fail if reset does nothing at all, and no test at this level
+    // could: save-on-every-set means working memory and NVRAM are always
+    // identical when a request arrives, so `working <- nvram` is
+    // observationally a no-op through the wire. The difference is only
+    // visible where working and NVRAM diverge, which needs a set without
+    // a save -- something method 0x0006 cannot express, since it does
+    // both. That case is covered by state.rs's unit tests.
+    let (session, mut device) = fixture();
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ))
+    .expect("set succeeds");
+
+    within!(ops::config::reset(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ))
+    .expect("reset succeeds");
+
+    let values = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["wireless_channel"]
+    ))
+    .expect("get succeeds");
+
+    assert_eq!(
+        values.get("wireless_channel").map(Vec::as_slice),
+        Some(b"11".as_slice()),
+        "the set was saved, so the reset reload must observe it"
+    );
+}
