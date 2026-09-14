@@ -323,10 +323,18 @@ go-udap is stable at ascending index. Ten interfaces made it obvious where two
 never could. Cause is `netdev`'s Linux netlink backend collecting through a
 `HashMap` and losing the kernel's ordering.
 
-Filed as [issue #13](https://github.com/yo61/udapcfg-rs/issues/13). Not fixed
-here because the faithful fix differs per platform — go-udap does not sort, it
-prints OS order, and OS order is ascending-index on Linux but creation order on
-macOS.
+Filed as [issue #13](https://github.com/yo61/udapcfg-rs/issues/13). Still
+unfixed on `main` as of this change: `enumerate()` does not sort, and the
+spec's accepted-deltas table has no row for print ordering.
+[PR #15](https://github.com/yo61/udapcfg-rs/pull/15) is open and proposes both
+— sorting by name in natural order (`en2` before `en10`) inside `enumerate()`,
+plus the delta row.
+
+Note that this could not be fixed by matching go-udap, because go-udap does not
+sort at all — it prints OS order, and no single rule reproduces that on both
+platforms: it is ascending index on Linux but creation order on macOS, where
+`en0` (index 15) precedes `en8` (index 13). A stable, explainable order was
+chosen instead, and the divergence is in the spec's accepted-deltas table.
 
 ### Remaining
 
