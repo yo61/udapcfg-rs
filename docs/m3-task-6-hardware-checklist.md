@@ -191,7 +191,7 @@ possible. The preamble above, written when it had one, is stale.
 | 6. Linux kernel floor | **Pass.** Verified on 6.18.42, well above the 5.7 floor. Nothing older to hand. |
 | 7. Windows arm | **Open.** The CI matrix compiles and lints it (116 tests pass on both Windows targets); nothing invokes it. |
 | 8. Two real NICs | **Pass.** See below. |
-| 9. Flaky interface mid-discovery | **Open.** |
+| 9. Flaky interface mid-discovery | **Pass**, with a caveat — see below. |
 
 ### Step 3's negative case does not exist on *this* topology
 
@@ -348,6 +348,69 @@ platforms: it is ascending index on Linux but creation order on macOS, where
 `en0` (index 15) precedes `en8` (index 13). Any fix is therefore a deliberate
 divergence and needs its own accepted-deltas row.
 
+### Step 9 — a link dropped mid-discovery
+
+Run on 2026-09-14 against the dev host. `--all-interfaces -v` with a 60-second
+timeout; `en8` was brought down six seconds in, with its flags sampled every
+second to prove when it happened:
+
+```
+18:48:02  flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>
+18:48:08  flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST>      <- down
+```
+
+Both transports had bound and pinned before the drop (`en0` index 15, `en8`
+index 13). Discovery ran the full 60 seconds, ended on its own timeout, exited
+**0**, and reported `00:04:20:16:17:18` exactly once.
+
+**The caveat, which matters for what this does and does not prove.** Nothing
+was retired, because nothing errored. A `SO_REUSEPORT` socket bound to
+`0.0.0.0` does not fail when the interface its egress is pinned to goes down —
+it simply stops receiving. There is no error for `MultiTransport` to react to.
+
+So the *outcome* the checklist asks for is verified on real hardware: discovery
+on the healthy interface continued and the run completed cleanly. The
+**per-child retirement mechanism itself is still exercised only by mocks**,
+because this failure mode never triggers it. Retirement needs a `recv` that
+returns an error, not one that goes quiet.
+
+Expect the same on Linux: `SO_BINDTOIFINDEX` filters ingress, so a downed
+interface there would likewise fall silent rather than error. Whatever does
+trigger retirement on a real socket, it is not an interface going down.
+
+A first run of this test was discarded: `en8` never actually went down, and the
+30-second window elapsed with the interface still `UP` throughout. Sampling the
+flags is what caught it — without that the run looks identical to a pass.
+
+### How lossy is `en8`, and do retries help?
+
+`en8` loses packets often enough to matter, so it doubles as a test of
+`--retries`. 450 discoveries, 150 per arm, interleaved run-by-run so that
+drift in the network hits every arm equally:
+
+| `--retries` | packets sent | found the device |
+|---|---|---|
+| 0 | 1 | 139/150 — **92.7%** |
+| 2 | 3 | 149/150 — **99.3%** |
+| 5 | 6 | 150/150 — **100%** |
+
+**The loss is independent per packet, not bursty.** Single-packet failure is
+11/150 ≈ 7.3%; if each packet fails independently, three should fail
+0.073³ ≈ 0.04% of the time, or about 0.06 runs in 150. One was observed. Six
+packets should essentially never fail, and none did.
+
+That settles a design question worth not re-opening. `send_retried` fires every
+copy back-to-back with no inter-send delay, copying squeezeplay's triple-send,
+and the fidelity contract pins it that way. It is tempting to assume spreading
+the retransmits across the listen window would be more robust — but that only
+helps against *bursty* loss, and this is not bursty. Packets microseconds apart
+already fail independently, so spacing them would buy nothing. The inherited
+design is sound.
+
+Do not conclude anything about retries from a small sample. An earlier reading
+of 11/12 runs suggested retries did not help; twelve runs cannot distinguish
+92.7% from 99.3%, where the expected difference is under one run.
+
 ### Remaining
 
 - **Step 7 (Windows runtime).** Still open. The CI matrix compiles and lints the
@@ -355,4 +418,5 @@ divergence and needs its own accepted-deltas row.
   and the suite reports 116 tests run / 116 passed there. But no test calls
   `bind_on_interface`, so the unsupported-interface path itself is still never
   invoked, and nobody has observed Windows surfacing that message at runtime.
-- **Step 9 (flaky interface mid-discovery).** Still open.
+- **Step 9 (flaky interface mid-discovery).** Passed, but see the caveat: it
+  verifies the outcome, not the retirement path.
