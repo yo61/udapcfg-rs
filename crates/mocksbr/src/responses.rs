@@ -1,7 +1,11 @@
 //! Reply builders. Layout and TLV order match go-udap's mocksbr so the
 //! committed wire captures stay valid.
 
-use crate::device::DeviceConfig;
+use crate::device::{DeviceConfig, Malformed};
+
+/// The UCP method `Malformed::UnknownMethod` replies under. Not a real
+/// method; go-udap hardcodes the same value (`mocksbr/responses.go`).
+const UNRECOGNISED_METHOD: u16 = 0x9999;
 use crate::state::DeviceState;
 use udap::protocol::{ADDR_TYPE_ETH, Packet, UAP_CLASS_UCP, UDAP_TYPE_UCP};
 use udap::tlv;
@@ -76,8 +80,29 @@ pub fn get_data_response(
     state: &DeviceState,
     payload: &[u8],
 ) -> Vec<u8> {
-    let header = build_header(request, cfg, request.ucp_method);
+    // UnknownMethod changes only the header, so the client rejects the
+    // reply before it ever decodes the payload.
+    let method = if cfg.malformed == Malformed::UnknownMethod {
+        UNRECOGNISED_METHOD
+    } else {
+        request.ucp_method
+    };
+    let header = build_header(request, cfg, method);
     let mut out = header.to_bytes().to_vec();
+
+    match cfg.malformed {
+        Malformed::OversizedCount => {
+            out.extend_from_slice(&0xFFFFu16.to_be_bytes());
+            return out;
+        }
+        Malformed::LengthExceedsPayload => {
+            out.extend_from_slice(&1u16.to_be_bytes()); // one item
+            out.extend_from_slice(&0u16.to_be_bytes()); // offset
+            out.extend_from_slice(&1000u16.to_be_bytes()); // length, no body
+            return out;
+        }
+        Malformed::None | Malformed::UnknownMethod => {}
+    }
 
     let mut items: Vec<(u16, Vec<u8>)> = Vec::new();
     let mut pos = CREDENTIAL_FIELDS;

@@ -34,6 +34,19 @@ impl DeviceState {
         }
     }
 
+    /// A device whose NVRAM carries `seed` over the factory defaults.
+    ///
+    /// Both tiers get it: the seed models a device that was configured
+    /// and saved before the test began, so a reset must find it.
+    pub(crate) fn factory_with(seed: &Params) -> Self {
+        let mut state = Self::factory();
+        for (name, value) in seed {
+            state.working.insert(name.clone(), value.clone());
+            state.nvram.insert(name.clone(), value.clone());
+        }
+        state
+    }
+
     /// The value the device is currently running.
     pub(crate) fn get(&self, name: &str) -> Option<&[u8]> {
         self.working.get(name).map(Vec::as_slice)

@@ -1,6 +1,6 @@
 //! A network of virtual devices that a `MockTransport` can drive.
 
-use crate::device::DeviceConfig;
+use crate::device::{DeviceConfig, Op};
 use crate::responses;
 use crate::state::DeviceState;
 use crate::wire;
@@ -23,7 +23,10 @@ pub struct Network {
 impl Network {
     #[must_use]
     pub fn new(devices: Vec<DeviceConfig>) -> Self {
-        let state = devices.iter().map(|_| DeviceState::factory()).collect();
+        let state = devices
+            .iter()
+            .map(|cfg| DeviceState::factory_with(&cfg.nvram))
+            .collect();
         Network {
             devices,
             state: Mutex::new(state),
@@ -48,11 +51,7 @@ impl Network {
                 cfg
             })
             .collect::<Vec<DeviceConfig>>();
-        let state = devices.iter().map(|_| DeviceState::factory()).collect();
-        Network {
-            devices,
-            state: Mutex::new(state),
-        }
+        Network::new(devices)
     }
 
     /// Handles one request, returning every reply it provokes.
@@ -75,23 +74,48 @@ impl Network {
         self.devices
             .iter()
             .enumerate()
+            // Off the network entirely: the device answers nothing,
+            // discovery included.
+            .filter(|(_, cfg)| !cfg.unreachable)
+            // Failing discovery skips the device silently rather than
+            // answering with an error, because a broadcast has no
+            // requester to reply to. go-udap/mocksbr/handlers.go:103.
+            .filter(|(_, cfg)| {
+                request.ucp_method != method::ADV_DISC || !cfg.fails_on(Op::Discover)
+            })
             .filter(|(_, cfg)| {
                 request.ucp_method == method::ADV_DISC || request.dst_address == cfg.mac
             })
             .filter_map(|(index, cfg)| {
-                // Fault injection short-circuits the operation's own
+                // Failure injection short-circuits the operation's own
                 // reply, but not discovery: a device that cannot answer
-                // get_data is still discoverable.
-                if let Some(message) = &cfg.error_reply
-                    && request.ucp_method != method::ADV_DISC
+                // get_data is still discoverable. A device failing
+                // discovery itself was already skipped above.
+                //
+                // The message names the *requested* operation, so a
+                // device failing only get_ip never claims to have
+                // failed a reset.
+                let op = Op::from_method(request.ucp_method);
+                if let Some(op) = op
+                    && cfg.fails_on(op)
                 {
+                    let message = cfg
+                        .fail_message
+                        .clone()
+                        .unwrap_or_else(|| format!("mocksbr: configured to fail {}", op.as_str()));
                     return Some((
-                        responses::error_response(&request, cfg, message),
+                        responses::error_response(&request, cfg, &message),
                         cfg.mac.to_string(),
                     ));
                 }
                 let reply = match request.ucp_method {
                     method::ADV_DISC => responses::discovery_response(&request, cfg),
+                    // Above the reply arms. A reorder is a compile
+                    // error, not a silent bug: rustc reports the
+                    // guarded arm as an unreachable pattern, which
+                    // RUSTFLAGS=-D warnings promotes to an error.
+                    method::GET_IP if cfg.drop_get_ip => return None,
+                    method::GET_UUID if cfg.drop_get_uuid => return None,
                     method::GET_IP => responses::get_ip_response(&request, cfg),
                     method::GET_UUID => responses::get_uuid_response(&request, cfg),
                     method::GET_DATA => {
