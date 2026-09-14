@@ -131,12 +131,25 @@ actually verified" -- so M3 task 6 step 7 remains open)
     - New parser, encoder or decoder work gets a proptest round-trip.
     - Before claiming a test covers a branch, break the branch and watch
       the test fail.
+    - A test whose outcome depends on scheduling -- `select!`,
+      concurrency, timing -- must be shown to catch its mutant across
+      repeated runs, not once. One observed failure cannot tell a
+      reliable test from a coin flip.
+    - To assert that something does *not* happen, prefer virtual time
+      (`#[tokio::test(start_paused = true)]` plus a timeout) over a
+      pre-cancelled token or a real sleep.
 
 ## Severity: blocking
 
-## Source: global CLAUDE.md Testing standards; spec success criteria 1-3
+## Source: global CLAUDE.md Testing standards; spec success criteria 1-3;
+the last two from PR #28
 
-## Last triggered: never
+## Last triggered: 2026-09-14 (PR #28 -- `an_unreachable_device_answers_nothing`
+pre-cancelled its token, and `MockTransport::recv` selects over the
+cancellation and the queued reply without `biased`, so the test passed
+whether or not the device stayed silent: 210/300 against a mutant. The
+existing break-the-branch criterion could not catch it, because it had
+been satisfied by a single observed failure)
 
 ---
 
