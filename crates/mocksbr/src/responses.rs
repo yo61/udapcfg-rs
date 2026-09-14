@@ -2,6 +2,7 @@
 //! committed wire captures stay valid.
 
 use crate::device::DeviceConfig;
+use crate::state::DeviceState;
 use udap::protocol::{ADDR_TYPE_ETH, Packet, UAP_CLASS_UCP, UDAP_TYPE_UCP};
 use udap::tlv;
 
@@ -64,12 +65,17 @@ const CREDENTIAL_FIELDS: usize = 32;
 
 /// Builds a `get_data` response for the offsets the request asked for.
 ///
-/// Each requested offset is answered with that parameter's factory
-/// default, encoded to its wire width — so a mock read reproduces what a
-/// setup-mode device reports. Offsets absent from the table are skipped,
-/// as a real device would skip what it does not have.
+/// Each requested offset is answered from the device's working memory,
+/// encoded to its wire width — so a read reflects whatever was last
+/// written rather than a fixed factory value. Offsets absent from the
+/// table are skipped, as a real device would skip what it does not have.
 #[must_use]
-pub fn get_data_response(request: &Packet, cfg: &DeviceConfig, payload: &[u8]) -> Vec<u8> {
+pub fn get_data_response(
+    request: &Packet,
+    cfg: &DeviceConfig,
+    state: &DeviceState,
+    payload: &[u8],
+) -> Vec<u8> {
     let header = build_header(request, cfg, request.ucp_method);
     let mut out = header.to_bytes().to_vec();
 
@@ -85,7 +91,7 @@ pub fn get_data_response(request: &Packet, cfg: &DeviceConfig, payload: &[u8]) -
             let offset = u16::from_be_bytes([payload[pos], payload[pos + 1]]);
             pos += 4; // offset and the requested length
             if let Some(param) = udap::parameters::by_offset(offset)
-                && let Ok(encoded) = param.encode(param.factory_default.as_bytes())
+                && let Ok(encoded) = param.encode(state.get(param.name).unwrap_or(b""))
             {
                 items.push((offset, encoded));
             }
@@ -125,13 +131,16 @@ pub fn error_response(request: &Packet, cfg: &DeviceConfig, message: &str) -> Ve
     out
 }
 
-/// Builds a `set_data` acknowledgement: header only, no payload.
+/// Builds a `set_data` acknowledgement: header plus a 2-byte count of
+/// the parameters accepted.
 ///
 /// go-udap accepts 0x0006, 0x0005 or 0x0002 as an acknowledgement; real
 /// devices have been observed answering with the method they were sent.
 #[must_use]
-pub fn set_data_response(request: &Packet, cfg: &DeviceConfig) -> Vec<u8> {
-    build_header(request, cfg, request.ucp_method)
+pub fn set_data_response(request: &Packet, cfg: &DeviceConfig, accepted: u16) -> Vec<u8> {
+    let mut out = build_header(request, cfg, request.ucp_method)
         .to_bytes()
-        .to_vec()
+        .to_vec();
+    out.extend_from_slice(&accepted.to_be_bytes());
+    out
 }

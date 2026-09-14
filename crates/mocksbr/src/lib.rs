@@ -2,7 +2,10 @@
 
 pub mod device;
 pub mod network;
-pub mod responses;
+// Reply builders are an implementation detail of `Network`, which is
+// the only caller; nothing outside the crate uses them. Narrowed rather
+// than making `DeviceState` public purely to satisfy a signature.
+pub(crate) mod responses;
 pub mod transport;
 // Both are exercised by their own tests, but neither has a non-test
 // caller until the state is wired into the network (M5-A Task 3) — so
