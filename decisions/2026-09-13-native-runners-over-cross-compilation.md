@@ -94,10 +94,11 @@ musl follows from the fidelity contract rather than from preference.
 The port's standing rule is same wire bytes, same CLI surface, same exit
 codes; shipping a dynamically-linked Linux binary where go-udap ships a
 static one is a user-visible divergence in where the tool will run. It
-also happens to suit the verification target, whose `/tmp`, `/home` and
-`/mnt` are all mounted `noexec`, leaving `/var/tmp` as the only
-executable path — one fewer variable when the binary depends on no
-system libraries at all.
+also happens to suit the verification target, which mounts `/tmp` and its
+boot-pool `/home` and `/mnt` datasets `noexec` — one fewer variable when
+the binary depends on no system libraries at all. (Its `$HOME` is a
+separate dataset that does permit execution, which the first pass at this
+got wrong by reading the parent mount rather than the target path.)
 
 ## Trade-offs accepted:
 

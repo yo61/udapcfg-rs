@@ -264,10 +264,18 @@ unprivileged account, which is what let it answer OQ-2 *and* redo steps 1–4 an
 It also has ten broadcast-capable IPv4 interfaces, which stress
 `--all-interfaces` far harder than two.
 
-One trap: `/tmp`, `/home` and `/mnt` are all mounted **`noexec`** there.
-`/var/tmp` is writable and executable. Use a static musl binary from the CI
-build matrix rather than an ad-hoc local cross-build, so the artifact
-comes from a recorded toolchain.
+One trap: `/tmp` is `noexec` there, as are the boot-pool `/home` and `/mnt`
+datasets. But `$HOME` is **not** under those — it is `/mnt/space/home/robin`,
+its own ZFS dataset mounted without `noexec` — so `~/bin` runs fine and is
+where the binaries live. `/var/tmp` also works. Check with
+`findmnt -no OPTIONS --target <path>` rather than reasoning from the parent
+directory's mount, which is what makes this a trap.
+
+`~/bin` is not on the default PATH there (`/usr/local/bin:/usr/bin:/bin:/usr/games`),
+so invoke by full path or add it.
+
+Use a static musl binary from the CI build matrix rather than an ad-hoc local
+cross-build, so the artifact comes from a recorded toolchain.
 
 
 ---
