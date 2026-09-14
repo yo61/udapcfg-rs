@@ -382,6 +382,35 @@ A first run of this test was discarded: `en8` never actually went down, and the
 30-second window elapsed with the interface still `UP` throughout. Sampling the
 flags is what caught it — without that the run looks identical to a pass.
 
+### How lossy is `en8`, and do retries help?
+
+`en8` loses packets often enough to matter, so it doubles as a test of
+`--retries`. 450 discoveries, 150 per arm, interleaved run-by-run so that
+drift in the network hits every arm equally:
+
+| `--retries` | packets sent | found the device |
+|---|---|---|
+| 0 | 1 | 139/150 — **92.7%** |
+| 2 | 3 | 149/150 — **99.3%** |
+| 5 | 6 | 150/150 — **100%** |
+
+**The loss is independent per packet, not bursty.** Single-packet failure is
+11/150 ≈ 7.3%; if each packet fails independently, three should fail
+0.073³ ≈ 0.04% of the time, or about 0.06 runs in 150. One was observed. Six
+packets should essentially never fail, and none did.
+
+That settles a design question worth not re-opening. `send_retried` fires every
+copy back-to-back with no inter-send delay, copying squeezeplay's triple-send,
+and the fidelity contract pins it that way. It is tempting to assume spreading
+the retransmits across the listen window would be more robust — but that only
+helps against *bursty* loss, and this is not bursty. Packets microseconds apart
+already fail independently, so spacing them would buy nothing. The inherited
+design is sound.
+
+Do not conclude anything about retries from a small sample. An earlier reading
+of 11/12 runs suggested retries did not help; twelve runs cannot distinguish
+92.7% from 99.3%, where the expected difference is under one run.
+
 ### Remaining
 
 - **Step 7 (Windows runtime).** Still open. The CI matrix compiles and lints the
