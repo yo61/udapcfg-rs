@@ -328,13 +328,11 @@ go-udap is stable at ascending index. Ten interfaces made it obvious where two
 never could. Cause is `netdev`'s Linux netlink backend collecting through a
 `HashMap` and losing the kernel's ordering.
 
-Filed as [issue #13](https://github.com/yo61/udapcfg-rs/issues/13). Still
-unfixed on `main` as of this change: `enumerate()` does not sort, and the
-spec's accepted-deltas table has no row for print ordering.
-[PR #15](https://github.com/yo61/udapcfg-rs/pull/15) is open and proposes both
-— sorting inside `enumerate()` by stem and trailing unit number, so `en2`
+Filed as [issue #13](https://github.com/yo61/udapcfg-rs/issues/13) and fixed by
+this change: `enumerate()` now sorts by stem and trailing unit number, so `en2`
 precedes `en10`, VLAN sub-interfaces sort by id, and opaque hex ids such as
-docker's compare in hex order — plus the delta row.
+docker's compare in hex order. The divergence is recorded in the spec's
+accepted-deltas table.
 
 Note that this cannot be fixed by matching go-udap, because go-udap does not
 sort at all — it prints OS order, and no single rule reproduces that on both
