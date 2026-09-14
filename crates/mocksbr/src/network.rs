@@ -57,9 +57,13 @@ impl Network {
 
     /// Handles one request, returning every reply it provokes.
     ///
-    /// Answers advanced discovery, `get_ip`, `get_uuid`, `get_data` and
-    /// `reset`. Anything else produces no reply, which is also how a real
-    /// device behaves when it does not recognise a request.
+    /// Answers advanced discovery, `get_ip`, `get_uuid`, `get_data`,
+    /// `set_data` and `reset`. Anything else produces no reply, which is
+    /// also how a real device behaves when it does not recognise a
+    /// request.
+    ///
+    /// `set_data` and `reset` mutate the addressed device's state, so a
+    /// later `get_data` reflects them.
     #[must_use]
     pub fn receive(&self, packet: &[u8]) -> Vec<(Vec<u8>, String)> {
         let Ok((request, payload)) = Packet::from_bytes(packet) else {
@@ -116,7 +120,16 @@ impl Network {
                         let accepted = u16::try_from(items.len()).unwrap_or(u16::MAX);
                         responses::set_data_response(&request, cfg, accepted)
                     }
-                    method::RESET => responses::reset_response(&request, cfg),
+                    method::RESET => {
+                        // Reload working memory from NVRAM. go-udap
+                        // serves the ack first and then enters the
+                        // reboot window; the window itself is plan B.
+                        {
+                            let mut state = self.state.lock().ok()?;
+                            state.get_mut(index)?.apply_reset();
+                        }
+                        responses::reset_response(&request, cfg)
+                    }
                     _ => return None,
                 };
                 Some((reply, cfg.mac.to_string()))

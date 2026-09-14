@@ -582,3 +582,48 @@ async fn a_non_utf8_value_round_trips_byte_exact() {
         "a non-UTF-8 SSID must survive the full round trip unchanged"
     );
 }
+
+#[tokio::test]
+async fn reset_restores_the_saved_values() {
+    // mocksbr saves on every set, matching go-udap, so a reset reloads
+    // the most recent write rather than the factory default.
+    //
+    // Know what this can and cannot catch. It fails if reset restores
+    // factory defaults -- the plausible wrong implementation. It does
+    // NOT fail if reset does nothing at all, and no test at this level
+    // could: save-on-every-set means working memory and NVRAM are always
+    // identical when a request arrives, so `working <- nvram` is
+    // observationally a no-op through the wire. The difference is only
+    // visible where working and NVRAM diverge, which needs a set without
+    // a save -- something method 0x0006 cannot express, since it does
+    // both. That case is covered by state.rs's unit tests.
+    let (session, mut device) = fixture();
+    within!(ops::config::set(
+        &session,
+        &CancellationToken::new(),
+        &mut device,
+        &change("wireless_channel", b"11")
+    ))
+    .expect("set succeeds");
+
+    within!(ops::config::reset(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ))
+    .expect("reset succeeds");
+
+    let values = within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["wireless_channel"]
+    ))
+    .expect("get succeeds");
+
+    assert_eq!(
+        values.get("wireless_channel").map(Vec::as_slice),
+        Some(b"11".as_slice()),
+        "the set was saved, so the reset reload must observe it"
+    );
+}

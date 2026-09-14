@@ -34,10 +34,13 @@ pub(crate) fn decode_param_value(value: &[u8]) -> Vec<u8> {
     }
 }
 
-/// One offset/length/value triple from a `set_data` request.
+/// One decoded item from a `set_data` request.
+///
+/// The request carries offset and length too, but neither is kept: the
+/// offset is already resolved to `name`, and the length is implicit in
+/// `value`. A misread offset yields the wrong `name`, and a misread
+/// length the wrong `value`, so nothing goes uncovered by dropping them.
 pub(crate) struct SetDataItem {
-    pub offset: u16,
-    pub length: u16,
     pub value: Vec<u8>,
     /// `None` when the offset is not in the parameter table.
     pub name: Option<&'static str>,
@@ -68,8 +71,6 @@ pub(crate) fn parse_set_data_request(payload: &[u8]) -> Vec<SetDataItem> {
             break;
         }
         out.push(SetDataItem {
-            offset,
-            length,
             value: payload[pos..end].to_vec(),
             name: parameters::by_offset(offset).map(|p| p.name),
         });
@@ -129,10 +130,12 @@ mod tests {
 
         let items = parse_set_data_request(&payload);
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].offset, 4);
-        assert_eq!(items[0].length, 1);
         assert_eq!(items[0].value, vec![1]);
-        assert_eq!(items[0].name, Some("lan_ip_mode"));
+        assert_eq!(
+            items[0].name,
+            Some("lan_ip_mode"),
+            "the name is resolved from the offset, so this covers reading it"
+        );
     }
 
     #[test]
