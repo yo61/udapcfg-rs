@@ -88,6 +88,46 @@ impl Client {
         self.session.close().await
     }
 
+    /// Reads the named parameters from a device.
+    ///
+    /// Thin wrapper over [`crate::ops::config::get`].
+    ///
+    /// # Errors
+    /// Propagates [`OpError`].
+    pub async fn get_config(
+        &self,
+        cancel: &CancellationToken,
+        device: &Device,
+        params: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>, OpError> {
+        crate::ops::config::get(&self.session, cancel, device, params).await
+    }
+
+    /// Reads every known parameter into `device.parameters`.
+    ///
+    /// Thin wrapper over [`crate::ops::config::get_all`]. Takes
+    /// `&mut Device` because the mutation is the result.
+    ///
+    /// # Errors
+    /// Propagates [`OpError`].
+    pub async fn get_all_config(
+        &self,
+        cancel: &CancellationToken,
+        device: &mut Device,
+    ) -> Result<(), OpError> {
+        crate::ops::config::get_all(&self.session, cancel, device).await
+    }
+
+    /// Resets a device to factory defaults.
+    ///
+    /// Thin wrapper over [`crate::ops::config::reset`].
+    ///
+    /// # Errors
+    /// Propagates [`OpError`].
+    pub async fn reset(&self, cancel: &CancellationToken, device: &Device) -> Result<(), OpError> {
+        crate::ops::config::reset(&self.session, cancel, device).await
+    }
+
     /// Queries a device's active network configuration.
     ///
     /// Thin wrapper over [`crate::ops::getip::get_ip`], so call sites

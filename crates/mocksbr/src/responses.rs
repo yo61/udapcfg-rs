@@ -58,3 +58,69 @@ pub fn get_uuid_response(request: &Packet, cfg: &DeviceConfig) -> Vec<u8> {
     tlv::encode_into(0x0d, &cfg.uuid, &mut out);
     out
 }
+
+/// Credential fields preceding the item list in a `get_data` request.
+const CREDENTIAL_FIELDS: usize = 32;
+
+/// Builds a `get_data` response for the offsets the request asked for.
+///
+/// Each requested offset is answered with that parameter's factory
+/// default, encoded to its wire width — so a mock read reproduces what a
+/// setup-mode device reports. Offsets absent from the table are skipped,
+/// as a real device would skip what it does not have.
+#[must_use]
+pub fn get_data_response(request: &Packet, cfg: &DeviceConfig, payload: &[u8]) -> Vec<u8> {
+    let header = build_header(request, cfg, request.ucp_method);
+    let mut out = header.to_bytes().to_vec();
+
+    let mut items: Vec<(u16, Vec<u8>)> = Vec::new();
+    let mut pos = CREDENTIAL_FIELDS;
+    if payload.len() >= pos + 2 {
+        let count = u16::from_be_bytes([payload[pos], payload[pos + 1]]);
+        pos += 2;
+        for _ in 0..count {
+            if pos + 4 > payload.len() {
+                break;
+            }
+            let offset = u16::from_be_bytes([payload[pos], payload[pos + 1]]);
+            pos += 4; // offset and the requested length
+            if let Some(param) = udap::parameters::by_offset(offset)
+                && let Ok(encoded) = param.encode(param.factory_default.as_bytes())
+            {
+                items.push((offset, encoded));
+            }
+        }
+    }
+
+    let count = u16::try_from(items.len()).unwrap_or(u16::MAX);
+    out.extend_from_slice(&count.to_be_bytes());
+    for (offset, value) in items {
+        let length = u16::try_from(value.len()).unwrap_or(u16::MAX);
+        out.extend_from_slice(&offset.to_be_bytes());
+        out.extend_from_slice(&length.to_be_bytes());
+        out.extend_from_slice(&value);
+    }
+    out
+}
+
+/// Builds a `reset` acknowledgement: header only, no payload.
+#[must_use]
+pub fn reset_response(request: &Packet, cfg: &DeviceConfig) -> Vec<u8> {
+    build_header(request, cfg, request.ucp_method)
+        .to_bytes()
+        .to_vec()
+}
+
+/// Builds an error reply (UCP 0x0007).
+///
+/// An empty `message` yields a reply with no TLVs at all — the path
+/// every operation handles separately from one carrying an explanation.
+#[must_use]
+pub fn error_response(request: &Packet, cfg: &DeviceConfig, message: &str) -> Vec<u8> {
+    let header = build_header(request, cfg, udap::protocol::method::ERROR);
+    let mut out = header.to_bytes().to_vec();
+    if !message.is_empty() {
+        tlv::encode_into(0x03, message.as_bytes(), &mut out);
+    }
+    out
+}

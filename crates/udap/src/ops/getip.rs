@@ -45,6 +45,7 @@ fn parse_response(data: &[u8]) -> NetworkConfig {
 /// Queries a device's active network configuration.
 ///
 /// # Errors
+/// [`OpError::ZeroMac`] if the device has no MAC,
 /// [`OpError::Send`] or [`OpError::Recv`] on transport failure, or one of
 /// the device-reply variants if the device answers with anything but
 /// `get_ip`.
@@ -53,6 +54,9 @@ pub async fn get_ip(
     cancel: &CancellationToken,
     device: &Device,
 ) -> Result<NetworkConfig, OpError> {
+    if device.mac.is_zero() {
+        return Err(OpError::ZeroMac { operation: "GetIP" });
+    }
     let packet = session.header(device.mac, method::GET_IP, false).to_bytes();
     session.send_retried(&packet).await.map_err(OpError::Send)?;
     info!(mac = %device.mac, "sent GetIP request");

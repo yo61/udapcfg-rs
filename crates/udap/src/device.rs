@@ -1,6 +1,7 @@
 //! Discovered device metadata.
 
 use crate::Mac;
+use std::collections::BTreeMap;
 
 /// A device found by discovery. Fields come from the response TLVs.
 ///
@@ -34,6 +35,19 @@ pub struct Device {
     pub uuid: String,
     /// TLV 0x0c `device_status`.
     pub state: Vec<u8>,
+    /// NVRAM values most recently read from the device.
+    ///
+    /// Three roles, all load-bearing:
+    ///
+    /// - the **output channel** for [`crate::ops::config::get_all`],
+    ///   which returns only `()`;
+    /// - a **cache** that lets [`crate::ops::config::set`] skip its
+    ///   read-modify-write prelude, turning two round trips into one;
+    /// - a record of what is **actually persisted**, because `set` merges
+    ///   the caller's overrides only after the device acknowledges.
+    ///
+    /// Values are bytes, not `String`: ADR-6.
+    pub parameters: BTreeMap<String, Vec<u8>>,
 }
 
 /// Maps a `device_id` (TLV 0x0b, a 2-character ASCII hex string) to its
