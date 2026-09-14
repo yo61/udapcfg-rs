@@ -570,6 +570,33 @@ closest equivalent, but has not been evaluated against this feature set —
 particularly the cask and dual SBOM formats. Alternative: a hand-rolled GitHub
 Actions matrix. *Blocks M6 only.* **Resolve by:** prototyping `cargo-dist` at M5.
 
+*Proposal, not yet decided (2026-09-14):* ship the binary as **`udapcfg-rs`**,
+name the Homebrew package `udapcfg-rs`, and have the install create a
+`udapcfg` → `udapcfg-rs` symlink. The package name then says which
+implementation it is, while `udapcfg` stays the command people type. Three
+things to settle before adopting it:
+
+- **It amends the fidelity contract.** The Binary name row pins `udapcfg`, and
+  the program-name exception lists what follows from it: usage lines, stderr
+  usage errors, `--version`, man page filenames and their `.TH` header, and
+  completion function prefixes. Under this proposal those become `udapcfg-rs`,
+  and the contract needs rewording rather than silently drifting.
+- **The symlink does not rename the help text.** clap derives the program name
+  from the crate/bin name, not `argv[0]`, so invoking through the symlink would
+  still print `Usage: udapcfg-rs …`. Either accept that, or derive the name from
+  `argv[0]` so the two spellings each report themselves — which go-udap does not
+  do, so it is a new behaviour either way.
+- **Symlink mechanics.** For a Homebrew cask this is a second `binary` stanza
+  with a `target:`, not a postflight step. go-udap's cask already carries a
+  `postflight_steps` block for the Gatekeeper xattr (see its
+  `decisions/2026-09-05-cask-postflight-steps.md`), and that decision records
+  how brittle GoReleaser's rendering of that area is — worth reading before
+  adding anything alongside it. A conflict with any future package that also
+  provides `udapcfg` would need `conflicts_with`.
+
+Note this is orthogonal to the tooling question above: it applies whether
+packaging ends up on `cargo-dist` or a hand-rolled matrix.
+
 **OQ-4 — cross-compilation. RESOLVED: nothing cross-compiles.**
 The question asked which of `cross` (Docker), `cargo-zigbuild`, or per-target
 rustup toolchains to use for Windows and Linux builds from macOS, and called
