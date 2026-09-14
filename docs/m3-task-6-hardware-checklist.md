@@ -155,3 +155,198 @@ git commit -S -m "docs(spec): resolve OQ-1 and OQ-2 against real hardware"
 - An unexplained nextest `leaky` flag, seen twice on unrelated code, never reproduced
   (11 runs in the final review). The final review falsified the socket-leak theory:
   the M0–M2 sighting was on a synchronous decoder with no sockets or tasks.
+
+---
+
+## Results — 2026-09-13
+
+Run against a real Squeezebox in setup mode, MAC `00:04:20:16:17:18`
+(`00:04:20` is the Slim Devices OUI; UDAP reports `ip=0.0.0.0`, confirming
+setup mode). Dev host: macOS 25.6.0, `aarch64-apple-darwin`. Reference:
+go-udap built from `7cce675`.
+
+### Provenance of the reference binary
+
+The spec pins the source of truth to go-udap `v2.4.8` (`43864a5`), but the
+comparisons below used `7cce675` on the dev host and the `v2.4.9` release on
+Linux. That is not a gap: `git diff --name-only v2.4.8..7cce675 -- '*.go' go.mod
+go.sum` is **empty**, and so is `v2.4.8..v2.4.9`. Everything between those points
+is CI, goreleaser, the docs site and decision records. The three binaries are
+behaviourally identical, so every "matches" below holds for the pinned reference.
+
+Check this again if go-udap ever ships a release that does touch `udap/` or
+`cli/` — at that point the comparison would need re-running or the pin moving.
+
+**This host no longer has one usable interface.** It has two — `en0`
+(192.168.1.243) and `en8` (192.168.20.169) — which is what made step 8
+possible. The preamble above, written when it had one, is stale.
+
+| Step | Result |
+|------|--------|
+| 1. Discovery vs go-udap | **Pass.** Identical MAC, exit 0, 6/6 runs. |
+| 2. Loopback filter on a real socket | **Pass.** `skipping our own looped-back request src=192.168.20.169:17784`; no `00:00:00:00:00:00` phantom. |
+| 3. `--bind-interface` both ways | **Pass** (on Linux). Positive and negative both verified on `nas1`; untestable on the dev host — see below. |
+| 4. `--all-interfaces` exactly once | **Pass.** 6/6, one MAC per run. |
+| 5. OQ-2, `SO_BINDTOIFINDEX` privileges | **Pass. RESOLVED: no privileges needed.** See below. |
+| 6. Linux kernel floor | **Pass.** Verified on 6.18.42, well above the 5.7 floor. Nothing older to hand. |
+| 7. Windows arm | **Open.** The CI matrix compiles and lints it (116 tests pass on both Windows targets); nothing invokes it. |
+| 8. Two real NICs | **Pass.** See below. |
+| 9. Flaky interface mid-discovery | **Open.** |
+
+### Step 3's negative case does not exist on *this* topology
+
+Tested instead on `nas1`, which does have two separate segments — see the Linux
+results below. On the dev host:
+
+Both `en0` and `en8` find the device, because a setup-mode Squeezebox has no
+IP address and so answers any L2 broadcast reaching its NIC regardless of
+subnet. `en0` and `en8` are two paths onto the same physical segment. There is
+no interface here that legitimately fails to reach it, so "finds nothing, exits
+0" could not be tested deliberately — though it *was* observed incidentally
+whenever `en8` dropped a packet: `no devices found within 2s` on stderr, exit 0.
+
+### Step 8 passed, and the dedup is doing real work
+
+`-v --all-interfaces` on the dev host (2 NICs) shows **four** `found device`
+events for one device, collapsed to a single line of output. go-udap shows four
+too. On `nas1` (10 NICs, only one of which reaches the device) both show
+**two**, and both still print one MAC. The dedup is doing real work in each
+case, and the two implementations agree exactly.
+
+### The two platform arms filter ingress differently
+
+Worth knowing before anyone runs `--all-interfaces` on a many-NIC host, and not
+something any test had surfaced:
+
+| Host | NICs bound | Own-broadcast skips |
+|------|-----------|---------------------|
+| macOS, `IP_BOUND_IF` | 2 | 4 |
+| Linux, `SO_BINDTOIFINDEX` | 10 | 10 |
+
+On macOS each socket sees **every** sibling's broadcast, so loopback skips grow
+with the square of the interface count. On Linux each socket sees only its own,
+so they grow linearly. The options are not equivalent: `IP_BOUND_IF` pins egress
+only and leaves ingress unfiltered, while `SO_BINDTOIFINDEX` is a device binding
+that filters ingress as well.
+
+This is faithful — go-udap selects the same option per platform — and it costs
+nothing at these sizes. Recorded because the quadratic arm is the macOS one, and
+a macOS host with many interfaces would pay for it.
+
+### OQ-1's "Verify at M3" rider is resolved
+
+The spec asks to confirm `netdev` still populates `flags` with default features
+off. It does. A probe against the same `netdev` 0.46 configuration the crate
+uses reports `utun16` (Tailscale) as **up, non-loopback, carrying IPv4
+100.122.155.106, and `is_broadcast() == false`** — excluded by the broadcast
+test alone. Flags are discriminating, not defaulted.
+
+This also makes the carried finding below concrete rather than theoretical: on
+*this* host, deleting the `IFF_BROADCAST` check would make `utun16` usable and
+point discovery into a Tailscale tunnel.
+
+### Error paths match byte-for-byte
+
+Both tools, for an unknown interface and for `lo0`:
+
+```
+error: --bind-interface: "nosuch0" is not usable (must be up, broadcast-capable, with an IPv4 address)
+```
+
+exit 1 in each case.
+
+### The Linux host these results used
+
+`nas1` (TrueNAS Scale, Linux 6.18.42, glibc 2.41, x86_64) is multi-homed onto
+both segments — `bond0` 192.168.1.10 and `vlan20` 192.168.20.10 — and has an
+unprivileged account, which is what let it answer OQ-2 *and* redo steps 1–4 and
+8 on Linux. Those results are in the section below.
+It also has ten broadcast-capable IPv4 interfaces, which stress
+`--all-interfaces` far harder than two.
+
+One trap: `/tmp`, `/home` and `/mnt` are all mounted **`noexec`** there.
+`/var/tmp` is writable and executable. Use a static musl binary from the CI
+build matrix rather than an ad-hoc local cross-build, so the artifact
+comes from a recorded toolchain.
+
+
+---
+
+## Linux results — 2026-09-13, `nas1`
+
+TrueNAS Scale, Linux 6.18.42, glibc 2.41, x86_64, unprivileged user `robin`,
+10 usable interfaces. Binaries: `udapcfg` from the CI musl build matrix,
+`go-udap` v2.4.9 from the GitHub release — both official builds, no ad-hoc
+cross-compilation.
+
+Discovery matches: both print `00:04:20:16:17:18`, exit 0.
+
+### OQ-2 resolved — `SO_BINDTOIFINDEX` needs no privileges
+
+As unprivileged `robin` on kernel 6.18.42:
+
+```
+./udapcfg --bind-interface bond0 discover   ->  00:04:20:16:17:18   exit 0
+```
+
+The socket bound and discovery succeeded. No `EPERM`, no `CAP_NET_RAW`.
+go-udap, which uses `SO_BINDTODEVICE`, also succeeded unprivileged on the same
+kernel — so on 6.18.42 neither option is restricted, and the Rust port is not
+more restrictive than the Go.
+
+**Consequence for the fidelity contract:** the error text does *not* need to
+mention privileges. Recorded in the spec's accepted-deltas table by this change:
+the privilege warning in go-udap's message is not reproducible on a current
+kernel, for either implementation.
+
+Not established: whether an older kernel restricts `SO_BINDTODEVICE` where
+`SO_BINDTOIFINDEX` would not. Only 6.18.42 was available.
+
+### Step 3's negative case, finally testable
+
+`nas1` is multi-homed onto two genuinely separate segments, which the dev host
+was not:
+
+```
+--bind-interface bond0    (192.168.1.10)   ->  00:04:20:16:17:18   exit 0
+--bind-interface vlan20   (192.168.20.10)  ->  no devices found within 2s, exit 0
+```
+
+go-udap gives identical output for both. Finding nothing is not an error —
+verified, not assumed.
+
+### Steps 4 and 8 at ten interfaces
+
+`--all-interfaces` binds 10 transports and prints the device exactly once,
+3/3 runs, matching go-udap. The `BTreeMap<Mac, Device>` dedup holds at five
+times the interface count the dev host could offer.
+
+### A fidelity bug found: non-deterministic `interfaces` order
+
+`udapcfg interfaces` prints its rows in a different order on every run on Linux;
+go-udap is stable at ascending index. Ten interfaces made it obvious where two
+never could. Cause is `netdev`'s Linux netlink backend collecting through a
+`HashMap` and losing the kernel's ordering.
+
+Filed as [issue #13](https://github.com/yo61/udapcfg-rs/issues/13). Still
+unfixed on `main` as of this change: `enumerate()` does not sort, and the
+spec's accepted-deltas table has no row for print ordering.
+[PR #15](https://github.com/yo61/udapcfg-rs/pull/15) is open and proposes both
+— sorting inside `enumerate()` by stem and trailing unit number, so `en2`
+precedes `en10`, VLAN sub-interfaces sort by id, and opaque hex ids such as
+docker's compare in hex order — plus the delta row.
+
+Note that this cannot be fixed by matching go-udap, because go-udap does not
+sort at all — it prints OS order, and no single rule reproduces that on both
+platforms: it is ascending index on Linux but creation order on macOS, where
+`en0` (index 15) precedes `en8` (index 13). Any fix is therefore a deliberate
+divergence and needs its own accepted-deltas row.
+
+### Remaining
+
+- **Step 7 (Windows runtime).** Still open. The CI matrix compiles and lints the
+  Windows arm on both `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`,
+  and the suite reports 116 tests run / 116 passed there. But no test calls
+  `bind_on_interface`, so the unsupported-interface path itself is still never
+  invoked, and nobody has observed Windows surfacing that message at runtime.
+- **Step 9 (flaky interface mid-discovery).** Still open.

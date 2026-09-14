@@ -1358,7 +1358,7 @@ git commit -S -m "docs(spec): resolve OQ-1 and OQ-2 against real hardware"
 - [ ] Exit codes match go-udap: 0 success, 1 usage, 2 operation failure
 - [ ] No `#[allow(...)]` anywhere; any new `#[expect(...)]` carries a `reason`
 - [ ] Issue #2 closed
-- [ ] OQ-1 and OQ-2 marked resolved in the spec
+- [x] OQ-1 and OQ-2 marked resolved in the spec
 
 ## Pushing
 
