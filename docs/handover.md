@@ -2,9 +2,13 @@
 
 Current state of `udapcfg-rs`, for whoever picks it up next.
 
-**Last updated:** 2026-09-15, with `main` at `9752a25`
+**Last updated:** 2026-09-15. M5-B2 (`9752a25`) is the latest change to code.
 **This is a living document** — update it in place rather than adding dated
 copies. It should always describe *now*.
+
+It records the latest change to *code* rather than `main`'s tip, deliberately. A
+document that pins the tip is invalidated by its own merge — the SHA is wrong
+the moment it lands — so please do not "fix" this by putting the tip back.
 
 ## What this is
 
@@ -26,12 +30,12 @@ whatever its working tree happens to be. Check citations with
 
 | | |
 | --- | --- |
-| `main` | `9752a25` — M5-B2 merged |
+| Latest code change | M5-B2, `9752a25` |
 | Tests | 241 passing |
 | Clippy | silent |
 | `cargo fmt --all --check` | clean |
 | `cargo deny check` | advisories, bans, licences, sources all ok |
-| Open PRs | none, once [#33](https://github.com/yo61/udapcfg-rs/pull/33) — this document — lands |
+| Open PRs | none |
 | Open issues | [#29](https://github.com/yo61/udapcfg-rs/issues/29) |
 
 ## Start here: what just landed
