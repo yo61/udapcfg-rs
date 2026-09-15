@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
+use std::time::Duration;
 use udap::Mac;
 
 /// Per-device configuration, including the fault-injection knobs.
@@ -60,6 +61,13 @@ pub struct DeviceConfig {
     /// configured and saved — a reset reloads these, not the factory
     /// table.
     pub nvram: BTreeMap<String, Vec<u8>>,
+    /// Fault injection: how long this device takes to answer.
+    ///
+    /// Applies to every reply it produces, error replies included —
+    /// a device that refuses slowly is still slow
+    /// (go-udap `mocksbr/handlers.go:142`). `Duration::ZERO` replies
+    /// immediately.
+    pub slow: Duration,
 }
 
 impl DeviceConfig {
@@ -112,6 +120,7 @@ impl DeviceConfig {
             drop_get_uuid: false,
             malformed: Malformed::None,
             nvram: BTreeMap::new(),
+            slow: Duration::ZERO,
         }
     }
 }

@@ -330,7 +330,7 @@ async fn fail_on_discover_skips_the_device_from_discovery() {
         1,
         "the fail-on-discover device must be skipped, not answered with an error"
     );
-    assert_eq!(replies[0].1, "00:04:20:16:17:18");
+    assert_eq!(replies[0].src, "00:04:20:16:17:18");
 }
 
 #[tokio::test]
@@ -355,4 +355,145 @@ async fn naming_save_in_fail_on_also_rejects_a_set() {
         err.to_string().contains("locked"),
         "expected the configured rejection, got: {err}"
     );
+}
+
+#[tokio::test]
+async fn receive_reports_the_configured_delay() {
+    // Network stays synchronous: it does not wait, it reports what the
+    // wait would be. The transport is what turns this into elapsed time.
+    const SLOW: Duration = Duration::from_millis(80);
+    let mut cfg = DeviceConfig::default_with_mac(Mac::from_bytes(MAC));
+    cfg.slow = SLOW;
+    let network = Network::new(vec![cfg]);
+
+    let replies = network.receive(&discovery_request());
+    assert_eq!(replies.len(), 1);
+    assert_eq!(
+        replies[0].delay, SLOW,
+        "the reply carries its device's delay"
+    );
+    assert_eq!(replies[0].src, "00:04:20:16:17:18");
+}
+
+#[tokio::test]
+async fn a_device_with_no_configured_delay_reports_zero() {
+    let cfg = DeviceConfig::default_with_mac(Mac::from_bytes(MAC));
+    let network = Network::new(vec![cfg]);
+    let replies = network.receive(&discovery_request());
+    assert_eq!(replies[0].delay, Duration::ZERO);
+}
+
+/// T1. go-udap's `TestSlowDeviceReplyDelayedByConfiguredDuration`, but
+/// exact: its version brackets with a 200ms skew tolerance
+/// (failure_injection_test.go:96-101) because it uses a real clock.
+#[tokio::test(start_paused = true)]
+async fn a_slow_device_replies_after_exactly_its_delay() {
+    const SLOW: Duration = Duration::from_millis(80);
+    let (session, device) = fixture_with(|cfg| cfg.slow = SLOW);
+
+    // tokio's Instant, not std's: std would report real elapsed time and
+    // defeat the whole strategy.
+    let start = tokio::time::Instant::now();
+    within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["hostname"]
+    ))
+    .expect("the device answers, just late");
+    assert_eq!(start.elapsed(), SLOW);
+}
+
+/// T2. go-udap's `TestSlowDeviceTimesOutWhenDeadlineShorter`. ADR-2: the
+/// `CancellationToken` carries cancellation, `timeout` carries the
+/// deadline, together standing in for Go's context.
+#[tokio::test(start_paused = true)]
+async fn a_deadline_shorter_than_the_delay_times_out() {
+    const SLOW: Duration = Duration::from_millis(200);
+    const BUDGET: Duration = Duration::from_millis(40);
+    let (session, device) = fixture_with(|cfg| cfg.slow = SLOW);
+
+    tokio::time::timeout(
+        BUDGET,
+        ops::config::get(&session, &CancellationToken::new(), &device, &["hostname"]),
+    )
+    .await
+    .expect_err("the deadline expires before the device answers");
+}
+
+/// T4. go-udap sets Slow on the error path too
+/// (mocksbr/handlers.go:142) but never tests it: a device that refuses
+/// slowly is still slow.
+#[tokio::test(start_paused = true)]
+async fn slow_delays_an_error_reply_too() {
+    const SLOW: Duration = Duration::from_millis(120);
+    let (session, device) = fixture_with(|cfg| {
+        cfg.slow = SLOW;
+        cfg.fail_on = vec![Op::Get];
+    });
+
+    let start = tokio::time::Instant::now();
+    within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["hostname"]
+    ))
+    .expect_err("configured to fail");
+    assert_eq!(start.elapsed(), SLOW, "a refusal is delayed like any reply");
+}
+
+/// T3. `unreachable` wins: there is no reply for `slow` to delay, and it
+/// must not conjure one late.
+#[tokio::test(start_paused = true)]
+async fn slow_does_not_resurrect_an_unreachable_device() {
+    let (session, device) = fixture_with(|cfg| {
+        cfg.unreachable = true;
+        cfg.slow = Duration::from_millis(50);
+    });
+    silent!(ops::getip::get_ip(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ));
+}
+
+/// T6. Each reply carries its own device's delay, so a fast device
+/// overtakes a slow one in the same fan-out — which is what real
+/// hardware does.
+///
+/// Asserts each arrival *time*, not merely the order: order alone would
+/// still pass if every reply in the batch were given one shared delay.
+#[tokio::test(start_paused = true)]
+async fn a_fan_out_delivers_each_reply_at_its_own_delay() {
+    use udap::transport::Transport;
+
+    const FAST: Duration = Duration::from_millis(20);
+    const SLOW: Duration = Duration::from_millis(90);
+
+    // The slow device is listed FIRST, so config order cannot explain
+    // the arrival order.
+    let mut slow =
+        DeviceConfig::default_with_mac(Mac::from_bytes([0x00, 0x04, 0x20, 0x00, 0x00, 0x02]));
+    slow.slow = SLOW;
+    let mut fast =
+        DeviceConfig::default_with_mac(Mac::from_bytes([0x00, 0x04, 0x20, 0x00, 0x00, 0x01]));
+    fast.slow = FAST;
+
+    let transport = MockTransport::new(Arc::new(Network::new(vec![slow, fast])));
+    let cancel = CancellationToken::new();
+    let start = tokio::time::Instant::now();
+    transport.send(&discovery_request()).await.expect("send");
+
+    let (_, first) = transport.recv(&cancel).await.expect("first reply");
+    assert_eq!(start.elapsed(), FAST, "the fast device answers first");
+    assert_eq!(first, "00:04:20:00:00:01");
+
+    let (_, second) = transport.recv(&cancel).await.expect("second reply");
+    assert_eq!(
+        start.elapsed(),
+        SLOW,
+        "the slow device answers at its own delay"
+    );
+    assert_eq!(second, "00:04:20:00:00:02");
 }

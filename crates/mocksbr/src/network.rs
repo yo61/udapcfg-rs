@@ -6,8 +6,26 @@ use crate::state::DeviceState;
 use crate::wire;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+use std::time::Duration;
 use udap::Mac;
 use udap::protocol::{Packet, method};
+
+/// A reply plus how long the responding device would take to send it.
+///
+/// `Network` is synchronous and never waits: it *describes* the wire
+/// timeline and leaves the waiting to whoever delivers the bytes. That
+/// keeps every dispatch decision unit-testable without a runtime.
+///
+/// go-udap splits this across `Receive` and `ReceiveScheduled`
+/// (`mocksbr/handlers.go:28` and `:39`), the former documented as
+/// silently ignoring `Slow`. Collapsed to one here so no caller can
+/// bypass the knob by accident.
+#[derive(Debug, Clone)]
+pub struct ScheduledReply {
+    pub bytes: Vec<u8>,
+    pub src: String,
+    pub delay: Duration,
+}
 
 pub struct Network {
     devices: Vec<DeviceConfig>,
@@ -64,7 +82,7 @@ impl Network {
     /// `set_data` and `reset` mutate the addressed device's state, so a
     /// later `get_data` reflects them.
     #[must_use]
-    pub fn receive(&self, packet: &[u8]) -> Vec<(Vec<u8>, String)> {
+    pub fn receive(&self, packet: &[u8]) -> Vec<ScheduledReply> {
         let Ok((request, payload)) = Packet::from_bytes(packet) else {
             return Vec::new();
         };
@@ -103,10 +121,11 @@ impl Network {
                         .fail_message
                         .clone()
                         .unwrap_or_else(|| format!("mocksbr: configured to fail {}", op.as_str()));
-                    return Some((
-                        responses::error_response(&request, cfg, &message),
-                        cfg.mac.to_string(),
-                    ));
+                    return Some(ScheduledReply {
+                        bytes: responses::error_response(&request, cfg, &message),
+                        src: cfg.mac.to_string(),
+                        delay: cfg.slow,
+                    });
                 }
                 let reply = match request.ucp_method {
                     method::ADV_DISC => responses::discovery_response(&request, cfg),
@@ -156,7 +175,11 @@ impl Network {
                     }
                     _ => return None,
                 };
-                Some((reply, cfg.mac.to_string()))
+                Some(ScheduledReply {
+                    bytes: reply,
+                    src: cfg.mac.to_string(),
+                    delay: cfg.slow,
+                })
             })
             .collect()
     }
