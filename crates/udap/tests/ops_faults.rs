@@ -442,3 +442,58 @@ async fn slow_delays_an_error_reply_too() {
     .expect_err("configured to fail");
     assert_eq!(start.elapsed(), SLOW, "a refusal is delayed like any reply");
 }
+
+/// T3. `unreachable` wins: there is no reply for `slow` to delay, and it
+/// must not conjure one late.
+#[tokio::test(start_paused = true)]
+async fn slow_does_not_resurrect_an_unreachable_device() {
+    let (session, device) = fixture_with(|cfg| {
+        cfg.unreachable = true;
+        cfg.slow = Duration::from_millis(50);
+    });
+    silent!(ops::getip::get_ip(
+        &session,
+        &CancellationToken::new(),
+        &device
+    ));
+}
+
+/// T6. Each reply carries its own device's delay, so a fast device
+/// overtakes a slow one in the same fan-out — which is what real
+/// hardware does.
+///
+/// Asserts each arrival *time*, not merely the order: order alone would
+/// still pass if every reply in the batch were given one shared delay.
+#[tokio::test(start_paused = true)]
+async fn a_fan_out_delivers_each_reply_at_its_own_delay() {
+    use udap::transport::Transport;
+
+    const FAST: Duration = Duration::from_millis(20);
+    const SLOW: Duration = Duration::from_millis(90);
+
+    // The slow device is listed FIRST, so config order cannot explain
+    // the arrival order.
+    let mut slow =
+        DeviceConfig::default_with_mac(Mac::from_bytes([0x00, 0x04, 0x20, 0x00, 0x00, 0x02]));
+    slow.slow = SLOW;
+    let mut fast =
+        DeviceConfig::default_with_mac(Mac::from_bytes([0x00, 0x04, 0x20, 0x00, 0x00, 0x01]));
+    fast.slow = FAST;
+
+    let transport = MockTransport::new(Arc::new(Network::new(vec![slow, fast])));
+    let cancel = CancellationToken::new();
+    let start = tokio::time::Instant::now();
+    transport.send(&discovery_request()).await.expect("send");
+
+    let (_, first) = transport.recv(&cancel).await.expect("first reply");
+    assert_eq!(start.elapsed(), FAST, "the fast device answers first");
+    assert_eq!(first, "00:04:20:00:00:01");
+
+    let (_, second) = transport.recv(&cancel).await.expect("second reply");
+    assert_eq!(
+        start.elapsed(),
+        SLOW,
+        "the slow device answers at its own delay"
+    );
+    assert_eq!(second, "00:04:20:00:00:02");
+}
