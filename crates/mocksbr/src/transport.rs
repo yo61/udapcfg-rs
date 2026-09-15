@@ -1,8 +1,9 @@
 //! `MockTransport` — a `udap::Transport` backed by an in-process `Network`.
 
-use crate::network::Network;
+use crate::network::{Network, ScheduledReply};
 use async_trait::async_trait;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use udap::transport::{Transport, TransportError};
@@ -38,17 +39,38 @@ impl MockTransport {
             closed: CancellationToken::new(),
         }
     }
+
+    /// Queues a reply, honouring the responding device's delay.
+    ///
+    /// Zero-delay replies are queued synchronously and non-zero ones
+    /// from a spawned task, matching go-udap's `scheduleReply`
+    /// (`mocksbr/transport.go:55`). The asymmetry is load-bearing:
+    /// spawning unconditionally would let `send` return before an
+    /// instant reply was queued, and under `start_paused` the runtime
+    /// could advance the clock before that task ran, reordering
+    /// replies.
+    ///
+    /// `send` on an unbounded channel fails only once the receiver is
+    /// gone, which cannot happen while `self` lives; after the
+    /// transport is dropped, discarding a late reply is correct.
+    fn schedule(&self, reply: ScheduledReply) {
+        if reply.delay == Duration::ZERO {
+            let _ = self.sender.send((reply.bytes, reply.src));
+            return;
+        }
+        let sender = self.sender.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(reply.delay).await;
+            let _ = sender.send((reply.bytes, reply.src));
+        });
+    }
 }
 
 #[async_trait]
 impl Transport for MockTransport {
     async fn send(&self, packet: &[u8]) -> Result<(), TransportError> {
         for reply in self.network.receive(packet) {
-            // The receiver lives in `self.receiver` for as long as `self`
-            // does, so it can never be dropped out from under this
-            // sender; `send` on an unbounded channel only fails once the
-            // receiver is gone, which cannot happen here.
-            let _ = self.sender.send(reply);
+            self.schedule(reply);
         }
         Ok(())
     }

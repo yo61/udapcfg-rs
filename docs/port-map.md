@@ -72,6 +72,7 @@ it is really testing `udap`. Expect to move some tests inward.
 | `device.go` | `device.rs` | `DeviceConfig` has ~10 test-knob booleans (`DropGetData`, `SuppressDiscoveryUUID`, …). Consider `Vec<Fault>` instead — but that is a design change, so not in the faithful port. |
 | `responses.go` | `responses.rs` | Largest single file (384 lines). Response builders per method. |
 | `handlers.go` | `handlers.rs` | Method dispatch — becomes a `match` on a `Method` enum. |
+| `handlers.go` — `ReceiveScheduled() []ScheduledReply` + `Receive() [][]byte` | `network.rs` — `receive() -> Vec<ScheduledReply>` | One method, not two: Go's `Receive` is documented as silently dropping each device's `Slow`. See the spec's accepted deltas. |
 | `network.go`, `identity.go` | `network.rs`, `identity.rs` | Mechanical. |
 | `transport.go` | `transport.rs` | `MockTransport` — implements the same `Transport` trait. |
 | `testhelper/spawn.go` | `testhelper.rs` | Spawns the mock binary for out-of-process tests. |
