@@ -48,7 +48,7 @@ impl Transport for MockTransport {
             // does, so it can never be dropped out from under this
             // sender; `send` on an unbounded channel only fails once the
             // receiver is gone, which cannot happen here.
-            let _ = self.sender.send(reply);
+            let _ = self.sender.send((reply.bytes, reply.src));
         }
         Ok(())
     }

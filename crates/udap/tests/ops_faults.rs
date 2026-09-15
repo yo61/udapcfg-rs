@@ -330,7 +330,7 @@ async fn fail_on_discover_skips_the_device_from_discovery() {
         1,
         "the fail-on-discover device must be skipped, not answered with an error"
     );
-    assert_eq!(replies[0].1, "00:04:20:16:17:18");
+    assert_eq!(replies[0].src, "00:04:20:16:17:18");
 }
 
 #[tokio::test]
@@ -355,4 +355,30 @@ async fn naming_save_in_fail_on_also_rejects_a_set() {
         err.to_string().contains("locked"),
         "expected the configured rejection, got: {err}"
     );
+}
+
+#[tokio::test]
+async fn receive_reports_the_configured_delay() {
+    // Network stays synchronous: it does not wait, it reports what the
+    // wait would be. The transport is what turns this into elapsed time.
+    const SLOW: Duration = Duration::from_millis(80);
+    let mut cfg = DeviceConfig::default_with_mac(Mac::from_bytes(MAC));
+    cfg.slow = SLOW;
+    let network = Network::new(vec![cfg]);
+
+    let replies = network.receive(&discovery_request());
+    assert_eq!(replies.len(), 1);
+    assert_eq!(
+        replies[0].delay, SLOW,
+        "the reply carries its device's delay"
+    );
+    assert_eq!(replies[0].src, "00:04:20:16:17:18");
+}
+
+#[tokio::test]
+async fn a_device_with_no_configured_delay_reports_zero() {
+    let cfg = DeviceConfig::default_with_mac(Mac::from_bytes(MAC));
+    let network = Network::new(vec![cfg]);
+    let replies = network.receive(&discovery_request());
+    assert_eq!(replies[0].delay, Duration::ZERO);
 }
