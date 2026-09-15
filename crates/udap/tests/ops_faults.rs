@@ -382,3 +382,63 @@ async fn a_device_with_no_configured_delay_reports_zero() {
     let replies = network.receive(&discovery_request());
     assert_eq!(replies[0].delay, Duration::ZERO);
 }
+
+/// T1. go-udap's `TestSlowDeviceReplyDelayedByConfiguredDuration`, but
+/// exact: its version brackets with a 200ms skew tolerance
+/// (failure_injection_test.go:96-101) because it uses a real clock.
+#[tokio::test(start_paused = true)]
+async fn a_slow_device_replies_after_exactly_its_delay() {
+    const SLOW: Duration = Duration::from_millis(80);
+    let (session, device) = fixture_with(|cfg| cfg.slow = SLOW);
+
+    // tokio's Instant, not std's: std would report real elapsed time and
+    // defeat the whole strategy.
+    let start = tokio::time::Instant::now();
+    within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["hostname"]
+    ))
+    .expect("the device answers, just late");
+    assert_eq!(start.elapsed(), SLOW);
+}
+
+/// T2. go-udap's `TestSlowDeviceTimesOutWhenDeadlineShorter`. ADR-2: the
+/// `CancellationToken` carries cancellation, `timeout` carries the
+/// deadline, together standing in for Go's context.
+#[tokio::test(start_paused = true)]
+async fn a_deadline_shorter_than_the_delay_times_out() {
+    const SLOW: Duration = Duration::from_millis(200);
+    const BUDGET: Duration = Duration::from_millis(40);
+    let (session, device) = fixture_with(|cfg| cfg.slow = SLOW);
+
+    tokio::time::timeout(
+        BUDGET,
+        ops::config::get(&session, &CancellationToken::new(), &device, &["hostname"]),
+    )
+    .await
+    .expect_err("the deadline expires before the device answers");
+}
+
+/// T4. go-udap sets Slow on the error path too
+/// (mocksbr/handlers.go:142) but never tests it: a device that refuses
+/// slowly is still slow.
+#[tokio::test(start_paused = true)]
+async fn slow_delays_an_error_reply_too() {
+    const SLOW: Duration = Duration::from_millis(120);
+    let (session, device) = fixture_with(|cfg| {
+        cfg.slow = SLOW;
+        cfg.fail_on = vec![Op::Get];
+    });
+
+    let start = tokio::time::Instant::now();
+    within!(ops::config::get(
+        &session,
+        &CancellationToken::new(),
+        &device,
+        &["hostname"]
+    ))
+    .expect_err("configured to fail");
+    assert_eq!(start.elapsed(), SLOW, "a refusal is delayed like any reply");
+}
