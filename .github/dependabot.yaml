@@ -1,0 +1,49 @@
+# Dependabot keeps the action SHAs, the cargo dependencies and the pre-commit hooks. Renovate
+# (renovate.json5) keeps the runner image, the annotated *_VERSION values in the workflow and the
+# commitlint hook's config package. mise.toml, Cargo.toml's rust-version and mise-action's
+# `version:` are manual, refreshed deliberately (see mise.toml). Each pin has one owner.
+
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # The workspace's Cargo.toml and Cargo.lock.
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      hooks:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

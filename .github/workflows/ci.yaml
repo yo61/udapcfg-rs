@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -69,12 +69,14 @@ jobs:
       # the matrix is to learn which targets are broken, not just the first.
       fail-fast: false
       matrix:
+        # Runner labels here are matrix values, which Renovate does not read: move them by
+        # hand. There is no ubuntu-26.04 Arm image yet, so the Arm leg stays on 24.04.
         include:
           # Linux ships static/musl, matching go-udap's CGO_ENABLED=0.
           # A glibc-dynamic build would bind the artifact to the runner's
           # glibc and be less portable than the tool being ported.
           - target: x86_64-unknown-linux-musl
-            runner: ubuntu-latest
+            runner: ubuntu-26.04
             bin: udapcfg
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
@@ -142,7 +144,7 @@ jobs:
   # skipped by `prek run` automatically, so the job below covers it.
   lint:
     name: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -153,15 +155,18 @@ jobs:
         with:
           version: 2026.9.2
       - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece  # v3.0.0
+        env:
+          # renovate: datasource=github-releases depName=j178/prek extractVersion=^v(?<version>.+)$
+          PREK_VERSION: 0.5.4
         with:
-          prek-version: 0.4.13
+          prek-version: ${{ env.PREK_VERSION }}
 
   # Lint PR commit messages against Conventional Commits
   # (commitlint.config.mjs).
   commitlint:
     name: Conventional Commits
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       # Job-level permissions REPLACE the workflow-level block rather than
       # merging with it, so contents must be restated or checkout runs with
@@ -177,6 +182,6 @@ jobs:
           persist-credentials: false
       # Fork of wagoid/commitlint-github-action; upstream is unmaintained.
       # Digest-pinned, matching go-udap.
-      - uses: yo61/commitlint-github-action@501ff7bb31eb7133c871318c877d0e43cd1ff500  # v6.3.0 (digest-pinned)
+      - uses: yo61/commitlint-github-action@501ff7bb31eb7133c871318c877d0e43cd1ff500  # v6.3.1 (digest-pinned)
         with:
           configFile: commitlint.config.mjs
