@@ -5,9 +5,10 @@ export default {
     // of the tooling that uses it: go-udap points Dependabot at `deps` so
     // release-please can route bumps to a Dependencies changelog section,
     // since sections are keyed by type and the default `chore(deps)` lands
-    // under the hidden `chore` type. Neither is configured in this repo yet
-    // -- OQ-7 in the port spec defers both to M5 -- so this entry is
-    // forward-looking, not a description of current behaviour.
+    // under the hidden `chore` type. Dependabot here updates only the
+    // pre-commit hooks (brought forward on 2026-10-15), with its default
+    // prefix; `deps` and release-please stay deferred to M5 (OQ-7 in the
+    // port spec), so this entry is forward-looking.
     'type-enum': [
       2,
       'always',
