@@ -672,7 +672,10 @@ reading `mocksbr/fixture_test.go` when M4 starts.
 replicate: `prek` hooks, commitlint, release-please, Dependabot, the Taskfile.
 `release-please` supports Rust. Deferring all of it until M5 is defensible for a
 learning project. *Blocks nothing.* **Recommendation:** add `prek` + `cargo fmt`
-/ `clippy` hooks at M1; defer the rest.
+/ `clippy` hooks at M1; defer the rest. **Update 2026-10-15:** Dependabot for
+the pre-commit hooks was brought forward (`.github/dependabot.yaml`), so the
+hook pins have an updater. Its cargo and github-actions ecosystems, and the
+rest of this list, stay deferred to M5.
 
 **OQ-8 — non-UTF-8 values through the INI round-trip.** ADR-6 makes
 `Device`/`getdata::parse_response` values `Vec<u8>` so a non-UTF-8 NVRAM value
