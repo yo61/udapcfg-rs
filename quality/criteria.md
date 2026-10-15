@@ -179,7 +179,7 @@ been satisfied by a single observed failure)
 ## Criteria:
 
     - A workflow change is verified by a real run on every platform it
-      touches, before the claim that it works. `actionlint` and `zizmor`
+      touches, before the claim that it works. `jactionlint` and `zizmor`
       passing say nothing about runtime.
     - A step added "just in case" is justified or removed. An
       unconditional `rustup target add` was neither, and deadlocked both
