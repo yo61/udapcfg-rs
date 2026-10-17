@@ -161,6 +161,11 @@ jobs:
         with:
           version: 2026.9.2
       - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece  # v3.0.0
+        env:
+          # jactionlint's online rules (yo61/global decisions/2026-10-17-retire-zizmor.md);
+          # local hooks stay offline.
+          JACTIONLINT_ONLINE: 1
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           prek-version: 0.4.13
 
