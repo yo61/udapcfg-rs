@@ -53,7 +53,10 @@ look, and it closes when the work does.
 
 Each milestone since M5-B1 went spec, then plan, then implementation: designs in
 `docs/specs/`, task-by-task plans in `docs/plans/`. M5-C should do the same.
-`ScheduledReply`, from M5-B2, is what its UDP server will need.
+`ScheduledReply`, from M5-B2, is what its UDP server will need. Settle
+[#46](https://github.com/yo61/udapcfg-rs/issues/46), `MockTransport`'s
+behaviour after `close`, before that design pass: the server will have real
+sockets to close.
 
 M6's three knobs have **zero uses** in go-udap's own mocksbr tests — their doc
 comments say they exist for the CLI's tests — so they are low value until the
@@ -63,20 +66,6 @@ CLI suite needs them. Do not port them just for completeness.
 
 Tracked issues are in `gh issue list`. These are the items with no issue:
 
-- **`MockTransport` after `close` diverges from go-udap, and it is not in the
-  accepted-deltas table.** Verified against `43864a5`, not inferred. Go's
-  `Close` (`mocksbr/transport.go:116`) sets `closed` *and* nils `pending`, its
-  `enqueue` drops anything arriving afterwards, and its `Recv` tests `t.closed`
-  **before** looking at the queue — so after `Close` it returns
-  `context.Canceled` every time. The Rust `close` only cancels the `closed`
-  token: queued replies stay in the channel, and `recv`'s unbiased
-  `tokio::select!` then picks at random between `TransportError::Cancelled` and
-  delivering one. Go's ordered check is exactly the `biased;` the Rust lacks.
-
-  `slow` adds a second way for a reply to be in flight at `close` time, which is
-  the case Go's `enqueue` guard exists to handle. Decide it before M5-C, whose
-  UDP server will have real sockets to close: either add `biased;` and drain the
-  channel, or write it into the accepted-deltas table.
 - **M3 task 6 step 7** — `udapcfg` at runtime on Windows. CI builds both Windows
   targets, but nothing has exercised the binary against a device there. Needs a
   Windows machine on the Receiver's LAN. See
@@ -188,7 +177,8 @@ written.
 **`MockTransport::recv` uses an unbiased `tokio::select!`.** When both a
 cancellation and a queued reply are ready, the winner is random. Any test that
 pre-cancels a token to stand in for a timeout is a coin flip. One such test
-scored 210/300 against its mutant before this was found.
+scored 210/300 against its mutant before this was found. Until
+[#46](https://github.com/yo61/udapcfg-rs/issues/46) is resolved, this holds.
 
 **A new RUSTSEC advisory fails `check` on every branch at once**, Dependabot's
 included, because `cargo deny check` reads the advisory database live. No PR
