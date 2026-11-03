@@ -1,14 +1,11 @@
 # Handover
 
-Current state of `udapcfg-rs`, for whoever picks it up next.
+How `udapcfg-rs` works and where it is heading, for whoever picks it up next.
 
-**Last updated:** 2026-09-15. M5-B2 (`9752a25`) is the latest change to code.
-**This is a living document** — update it in place rather than adding dated
-copies. It should always describe *now*.
-
-It records the latest change to *code* rather than `main`'s tip, deliberately. A
-document that pins the tip is invalidated by its own merge — the SHA is wrong
-the moment it lands — so please do not "fix" this by putting the tip back.
+**This is a living document**, so update it in place. It records what stays
+true across sessions: the contract, the milestones, open items with no other
+home, and the gotchas. It deliberately leaves out anything a command can
+answer, because a copy of live state is wrong by the next merge.
 
 ## What this is
 
@@ -26,104 +23,20 @@ whatever its working tree happens to be. Check citations with
 `git show 43864a5:path/to/file.go`. A local checkout normally sits at
 `~/code/github.com/yo61/go-udap`.
 
-## State
+## Current state
 
-| | |
-| --- | --- |
-| Latest code change | M5-B2, `9752a25` |
-| Tests | 241 passing |
-| Clippy | silent |
-| `cargo fmt --all --check` | clean |
-| `cargo deny check` | advisories, bans, licences, sources all ok |
-| Open PRs | none |
-| Open issues | [#29](https://github.com/yo61/udapcfg-rs/issues/29) |
+Ask the tools rather than this file:
 
-## Start here: what just landed
+```bash
+git log --oneline -10                      # what landed recently
+gh pr list                                 # open PRs, Dependabot's included
+gh issue list                              # open issues
+gh pr checks <n>                           # why a PR is or is not mergeable
+```
 
-**M5-B2, the mocksbr `Slow` knob, merged as `9752a25`
-([PR #34](https://github.com/yo61/udapcfg-rs/pull/34)).** It was built
-task-by-task from
-[`docs/plans/2026-09-14-m5b2-slow-knob.md`](plans/2026-09-14-m5b2-slow-knob.md),
-argued from [`docs/specs/2026-09-14-m5b2-slow-design.md`](specs/2026-09-14-m5b2-slow-design.md).
-
-The four branch commits were squashed into `9752a25`, so they exist only in the
-PR now. What each contributed, since the split is the useful part:
-
-| Commit | What |
-| --- | --- |
-| `fbf955b` | `ScheduledReply` + `DeviceConfig.slow`; `Network::receive` reports a delay, nothing waits yet |
-| `5136489` | `MockTransport::schedule` — the sync/spawn split; mocksbr's first `[dev-dependencies]` |
-| `3d0e3bc` | T1/T2/T4 — client round trip, deadline, error path |
-| `4374335` | T3/T6 — `slow` interacting with `unreachable`, and per-device fan-out timing |
-
-231 → 241 tests. The gate is clean on all four counts in the State table.
-
-Six new timing tests carry roughly 660 ms of virtual delay between them and
-cost 0.00 s of wall clock; both suites still report `finished in 0.00s`. If
-that ever changes, a test has picked up a real clock — most likely
-`std::time::Instant` where it wants `tokio::time::Instant`, or a missing
-`start_paused`.
-
-That holds on CI hardware too, not just locally. Every timing test lands in
-0.02–0.04 s on the slowest target (aarch64 Windows), and that residue is
-nextest's per-process overhead rather than any of the nominal delay:
-`a_deadline_shorter_than_the_delay_times_out` nominally waits 200 ms and ran in
-0.039 s. All six targets reported `241 tests run: 241 passed, 0 skipped`, read
-from the runner output rather than inferred from a green tick — the distinction
-[`quality/criteria.md`](../quality/criteria.md) insists on, since
-`--no-tests=pass` makes an empty run look like success.
-
-### What the mutation checks established
-
-Every mutation in the spec's table, each run **per test with `--exact`** and
-100 runs, never suite-level:
-
-| Mutation | Caught 100/100 by | Correctly stays green for |
-| --- | --- | --- |
-| `schedule` always synchronous | T1, T2, T4, T6, and both transport tests | T5, T3 |
-| `schedule` always spawns | T5 | the slow-path tests |
-| error reply loses its delay | T4 | T1 |
-| delay halved at both sites | T1, T4 | T2 |
-| one shared delay per batch | T6 | every single-device timing test |
-| `unreachable` filter deleted | T3 and both pre-existing unreachable tests | — |
-
-The right-hand column is the part that matters. It shows each test is the
-*only* one that can distinguish its mutation, which is exactly what the spec
-claimed when it argued T4 and T6 into existence. A mutation table where two
-rows name the same test means one of those tests is redundant.
-
-### The review that unblocked the push
-
-`lastlight-review-run.sh` reviewed `4374335` against `e7f1bd3` on 2026-09-15:
-**APPROVE, zero findings**, sonnet, sandboxed with containment verified and
-probes enabled. Recorded against lastlight-core 0.29.0 and pr-review skill
-7.4.0.
-
-It was a real pass, not a rubber stamp — it traced every consumer of the changed
-`Network::receive`/`ScheduledReply` contract across all three crates looking for
-stale tuple destructuring, and checked the new tests' `timeout`/`sleep` ordering
-assumptions against tokio's poll semantics.
-
-Worth knowing for next time: the reviewer's `Write` tool was denied three times
-and it fell back to a Bash heredoc. That did not affect the verdict, but it is
-noted in `.lastlight/pr-review/reviewer.log` and the permission settings may be
-worth a look.
-
-### Two findings from executing the plan
-
-Both are now in [Gotchas](#gotchas-that-cost-real-time); flagged here because
-they are corrections to a plan that had already been reviewed and merged.
-
-1. **The plan's test code did not pass the project's own clippy gate.**
-   `clippy::doc_markdown` rejected `TestSlowDeviceReplyDelayedByConfiguredDuration`,
-   `TestSlowDeviceTimesOutWhenDeadlineShorter` and `CancellationToken` appearing
-   unbackticked in `///` doc comments. Prose in `//` body comments is fine,
-   which is why the file's existing Go test-name citations never tripped it.
-2. **Task 4 step 4's verification was weaker than it read.** As written it ran
-   `cargo test --workspace` 100 times and counted non-zero exits. Cargo stops at
-   the first failing test *target*, so `scheduling.rs` failing meant
-   `ops_faults` never ran at all — the 100/100 proved something failed, not that
-   the four named tests did. Re-run per test with `--exact`.
+If work is paused waiting on something, such as a PR blocked behind another, say
+so on the waiting PR or issue, not here. That is where the next person will
+look, and it closes when the work does.
 
 ## Milestones
 
@@ -138,9 +51,9 @@ they are corrections to a plan that had already been reviewed and merged.
 | M5-C | standalone mocksbr binary | next — needs its own design pass |
 | M6 | `RebootDelay`, `DropGetData`, `SuppressDiscoveryUUID` | deferred |
 
-M5-C is the natural next milestone. `ScheduledReply` is what its UDP server
-will need, so M5-B2 unblocks it without doing any of it. Design pass first —
-spec, then plan, then implement, same as M5-B1 and M5-B2.
+Each milestone since M5-B1 went spec, then plan, then implementation: designs in
+`docs/specs/`, task-by-task plans in `docs/plans/`. M5-C should do the same.
+`ScheduledReply`, from M5-B2, is what its UDP server will need.
 
 M6's three knobs have **zero uses** in go-udap's own mocksbr tests — their doc
 comments say they exist for the CLI's tests — so they are low value until the
@@ -148,14 +61,8 @@ CLI suite needs them. Do not port them just for completeness.
 
 ## Still open
 
-- **[#29](https://github.com/yo61/udapcfg-rs/issues/29) — `MockTransport::InjectReply` unported.**
-  Replacing `crates/udap/src/session.rs:136`'s source-mismatch guard with
-  `if false` leaves the workspace green, so that branch is entirely untested. It
-  is live in production: discovery populates `Device.ip`, and every directed
-  reply afterwards goes through it. `InjectReply`
-  (`go-udap mocksbr/transport.go:70`) is the missing tool, because `Network`
-  always reports the device's own MAC as the source. Labelled `ready-for-agent`.
-  Note the test count in that issue predates M5-B2; it is 241 now.
+Tracked issues are in `gh issue list`. These are the items with no issue:
+
 - **`MockTransport` after `close` diverges from go-udap, and it is not in the
   accepted-deltas table.** Verified against `43864a5`, not inferred. Go's
   `Close` (`mocksbr/transport.go:116`) sets `closed` *and* nils `pending`, its
@@ -166,15 +73,10 @@ CLI suite needs them. Do not port them just for completeness.
   `tokio::select!` then picks at random between `TransportError::Cancelled` and
   delivering one. Go's ordered check is exactly the `biased;` the Rust lacks.
 
-  Pre-existing — the token and the `select!` both predate M5-B2, so this is not
-  a [#34](https://github.com/yo61/udapcfg-rs/pull/34) regression, and the
-  independent review did not raise it because it sits outside that diff. But
   `slow` adds a second way for a reply to be in flight at `close` time, which is
   the case Go's `enqueue` guard exists to handle. Decide it before M5-C, whose
   UDP server will have real sockets to close: either add `biased;` and drain the
-  channel, or write it into the accepted-deltas table. Per the spec's own
-  header, anything not in that table is a bug.
-
+  channel, or write it into the accepted-deltas table.
 - **M3 task 6 step 7** — `udapcfg` at runtime on Windows. CI builds both Windows
   targets, but nothing has exercised the binary against a device there. Needs a
   Windows machine on the Receiver's LAN. See
@@ -195,15 +97,18 @@ mise exec -- cargo fmt --all --check
 mise exec -- cargo deny check
 ```
 
-`mise.toml` pins the toolchain exactly (Rust 1.98.1) and sets
-`RUSTFLAGS = "-D warnings"`, so **every warning is a hard error** — including
-unused imports, which is what makes some mutations fail to compile rather than
-fail their tests. There is deliberately no `rust-toolchain.toml`; rustup would
-shadow mise's pin and give two sources of truth.
+`mise.toml` pins the toolchain exactly and sets `RUSTFLAGS = "-D warnings"`, so
+**every warning is a hard error** — including unused imports, which is what
+makes some mutations fail to compile rather than fail their tests. There is
+deliberately no `rust-toolchain.toml`; rustup would shadow mise's pin and give
+two sources of truth.
 
 `clippy.toml` exempts `unwrap`/`expect` inside tests. Everywhere else they are
 denied, along with `panic`, `print_stdout` and `allow_attributes` (use
 `#[expect(..., reason = "...")]`, which self-removes when it stops applying).
+
+Workflows and hooks are linted by `jactionlint` (config in
+`.github/jactionlint.yaml`), both in `prek` and in CI.
 
 ### Git
 
@@ -212,6 +117,7 @@ denied, along with `panic`, `print_stdout` and `allow_attributes` (use
   `origin/main`**, so a bare `git push` would target main. Run
   `git branch --unset-upstream` straight after.
 - Conventional Commits, imperative mood, ≤72-char subject.
+- `main` accepts squash merges only, and requires signed commits.
 - Every push needs a **local Last Light review recorded for that exact SHA**.
   Write `.lastlight/pr-review/findings.json`, then
   `~/.claude/hooks/lastlight-review-record.sh <sha>` (not on `PATH`). Any new
@@ -230,12 +136,21 @@ The rules that bite most often:
   flip. This is not theoretical — see below.
 - **Assert non-events with virtual time** (`#[tokio::test(start_paused = true)]`
   plus a timeout), never a pre-cancelled token or a real sleep.
+- **Read test counts from the runner output**, not from a green tick.
+  `--no-tests=pass` makes an empty run look like success.
+
+The timing tests use virtual time, so both suites report `finished in 0.00s`.
+If that ever changes, a test has picked up a real clock — most likely
+`std::time::Instant` where it wants `tokio::time::Instant`, or a missing
+`start_paused`.
 
 A reusable mutation harness is worth keeping to hand. The shape that works:
 build the one test binary with `--no-run --message-format=json`, pull the
 `executable` path out of the `compiler-artifact` line whose `target.name`
 matches, then loop `"$BIN" --exact <test-name>` and count non-zero exits.
-Per test, not per suite, for the reason in the gotchas below.
+Per test, not per suite, for the reason in the gotchas below. A good mutation
+table shows each test is the *only* one that catches its mutant; two rows
+naming the same test means one of those tests is redundant.
 
 ## Gotchas that cost real time
 
@@ -245,9 +160,7 @@ These are all learned the hard way. None is discoverable from the code.
 copied from memory may not match. A "survived" result in 0.00s almost always
 means the edit never landed. Always confirm with `rg` before believing a
 mutation result. The same reflow can happen to a test *after* you have
-mutation-checked it — `cargo fmt` rewrote the fan-out test's `let` bindings at
-the end of M5-B2, so its mutation check was re-run against the formatted
-version.
+mutation-checked it, so re-run the check after `cargo fmt`.
 
 **A mutant that fails to compile scores a fake 100/100.** Any harness counting
 non-zero exits cannot tell a build failure from a caught mutation. Under
@@ -257,11 +170,9 @@ hard error. Always build the mutant once and confirm it compiles before
 trusting a loop.
 
 **`cargo test` stops at the first failing test target.** A suite-level mutation
-run tells you *a* target failed, and every target after it never ran. During
-M5-B2 the mocksbr suite failing meant `ops_faults` was never executed, so a
-100/100 suite-level score said nothing about the four tests it was supposed to
-be checking. Use `--no-fail-fast` to see the full failure list, and `--exact`
-per test to get a number you can believe.
+run tells you *a* target failed, and every target after it never ran. Use
+`--no-fail-fast` to see the full failure list, and `--exact` per test to get a
+number you can believe.
 
 **Suite-level mutation results are confounded even when everything runs.**
 Measuring a mutant against the whole suite tells you *something* failed, not
@@ -278,6 +189,19 @@ written.
 cancellation and a queued reply are ready, the winner is random. Any test that
 pre-cancels a token to stand in for a timeout is a coin flip. One such test
 scored 210/300 against its mutant before this was found.
+
+**A new RUSTSEC advisory fails `check` on every branch at once**, Dependabot's
+included, because `cargo deny check` reads the advisory database live. No PR
+can merge until a separate PR bumps the affected crate in `Cargo.lock`; land
+that first, then rebase the rest.
+
+**A Dependabot PR rebased by anyone but Dependabot can become unmergeable.**
+#43's rebased head came out unsigned, with Robin as committer, and `main`
+requires signatures, so GitHub reported it `BLOCKED` with every check green.
+Local commits here are signed, so the likely route is GitHub's rebase-style
+"Update branch", which does not sign. Leave the rebase to Dependabot
+(`@dependabot rebase`, or `@dependabot recreate` once someone else has pushed
+to the branch).
 
 **A blocked hook kills the entire Bash call.** The Last Light gate is a
 `PreToolUse` hook, so combining "record the review" and "push" into one command
