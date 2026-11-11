@@ -1,8 +1,8 @@
 # Toolchain for udapcfg-rs.
 #
 # Versions are pinned exactly (project standard: pin exact versions, never
-# ranges). Refresh deliberately with `mise outdated` / `mise upgrade`, then
-# commit the change — do not let them float.
+# ranges). Renovate's mise manager opens a PR per release (renovate.json5);
+# do not let them float.
 #
 # Deliberately NOT adding a rust-toolchain.toml: rustup would read it and
 # shadow mise's pin, giving two sources of truth for the same thing.
