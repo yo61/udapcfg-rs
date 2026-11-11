@@ -9,3 +9,17 @@ updates:
     groups:
       hooks:
         patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      # Our own action's releases skip the cooldown (dependency-updates policy).
+      exclude:
+        - "yo61/commitlint-github-action"
+    groups:
+      actions-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
