@@ -38,7 +38,7 @@ socket2 = { version = "0.6", features = ["all"] }
 # Ipv4Net::broadcast(), whose `addr | hostmask` is the same arithmetic
 # directed_broadcast hand-rolled, with the /0 edge case handled inside.
 ipnet = "2.12"
-netdev = { version = "0.46", default-features = false }
+netdev = { version = "0.47", default-features = false }
 proptest = "1.11"
 serial_test = "4.0"
 
