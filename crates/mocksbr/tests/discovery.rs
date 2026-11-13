@@ -36,7 +36,7 @@ async fn mock_answers_advanced_discovery() {
     assert_eq!(packet.ucp_flags, 0x00, "replies clear the request bit");
     assert_eq!(packet.src_address.to_string(), "00:04:20:00:00:01");
     assert_eq!(packet.sequence, 1, "sequence is echoed");
-    assert!(!payload.is_empty());
+    assert_ne!(payload, []);
 }
 
 #[tokio::test]

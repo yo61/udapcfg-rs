@@ -199,7 +199,7 @@ mod tests {
         let bytes = original.to_bytes();
         let (parsed, payload) = Packet::from_bytes(&bytes).unwrap();
         assert_eq!(parsed, original);
-        assert!(payload.is_empty());
+        assert_eq!(payload, []);
     }
 
     #[test]
