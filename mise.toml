@@ -14,7 +14,7 @@ rust = { version = "1.99.1", components = "rustfmt,clippy", profile = "default" 
 # backend, so they are pinned the same way the toolchain is.
 "cargo:cargo-deny" = "0.20.2"       # advisories, licences, bans
 "cargo:cargo-audit" = "0.22.2"      # RustSec advisory scan
-"cargo:cargo-nextest" = "0.9.143"   # test runner
+"cargo:cargo-nextest" = "0.9.150"   # test runner
 "cargo:cargo-mutants" = "27.1.0"    # mutation testing (M1 onward)
 
 [env]
