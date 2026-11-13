@@ -84,7 +84,8 @@ mod tests {
 
     #[test]
     fn empty_input_yields_nothing() {
-        assert!(decode(&[]).is_empty());
+        let tlvs = decode(&[]);
+        assert!(tlvs.is_empty(), "{tlvs:?}");
     }
 
     // Matches Go's DecodeTLV: a truncated tail is dropped, the good
