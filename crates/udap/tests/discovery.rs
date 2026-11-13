@@ -69,7 +69,8 @@ async fn empty_network_discovers_nothing_without_erroring() {
         .await
         .expect("discovery must not error on timeout");
 
-    assert!(client.devices().is_empty());
+    let devices = client.devices();
+    assert!(devices.is_empty(), "{devices:?}");
 }
 
 #[tokio::test]

@@ -338,7 +338,8 @@ mod tests {
     #[test]
     fn no_parameters_yields_a_zero_count() {
         let payload = get_data_payload(&[]);
-        assert!(items_of(&payload).is_empty());
+        let items = items_of(&payload);
+        assert!(items.is_empty(), "{items:?}");
         assert_eq!(payload.len(), CREDENTIAL_FIELDS + 2, "just the count");
     }
 }

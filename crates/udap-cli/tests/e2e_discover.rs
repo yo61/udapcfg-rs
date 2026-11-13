@@ -60,7 +60,7 @@ async fn results_go_to_stdout_not_stderr() {
     let stdout = String::from_utf8(stdout).unwrap();
     let stderr = String::from_utf8(stderr).unwrap();
     assert!(stdout.contains("00:04:20:00:00:01"));
-    assert!(stderr.is_empty());
+    assert_eq!(stderr, "");
 }
 
 use clap::Parser;

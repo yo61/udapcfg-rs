@@ -23,7 +23,7 @@ fn parses_a_real_discovery_response() {
 fn decodes_the_discovery_tlvs() {
     let (_, payload) = Packet::from_bytes(DISCOVERY_FACTORY).expect("fixture must parse");
     let tlvs = udap::tlv::decode(payload);
-    assert!(!tlvs.is_empty());
+    assert!(!tlvs.is_empty(), "the fixture must yield TLVs");
     // 0x09 is firmware_rev; every real device reports one.
     assert!(
         tlvs.iter().any(|t| t.tag == 0x09),
