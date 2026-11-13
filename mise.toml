@@ -8,7 +8,7 @@
 # shadow mise's pin, giving two sources of truth for the same thing.
 
 [tools]
-rust = { version = "1.98.1", components = "rustfmt,clippy", profile = "default" }
+rust = { version = "1.99.1", components = "rustfmt,clippy", profile = "default" }
 
 # Supply chain and test tooling. Installed from crates.io via mise's cargo
 # backend, so they are pinned the same way the toolchain is.
