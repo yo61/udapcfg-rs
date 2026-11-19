@@ -217,8 +217,10 @@ every match to `n`. ripgrep recurses by default.
 | `quality/criteria.md` | the gate to evaluate against before calling work done |
 | `decisions/` | decision log, one file per decision |
 
-CI builds six targets on native runners: `{x86_64,aarch64}` × Linux musl, macOS
-and Windows MSVC. `rustup target add` is used **only** on the musl legs — every
+CI builds five targets on native runners: `{x86_64,aarch64}` × Linux musl and
+Windows MSVC, plus `x86_64-apple-darwin`. `aarch64-apple-darwin` has no CI leg
+(see `decisions/2026-11-19-drop-aarch64-apple-darwin-ci-leg.md`); it is built
+and tested only on the dev host. `rustup target add` is used **only** on the musl legs — every
 other target builds for its own host, and adding a target on Windows hung for 30
 minutes before that was restricted.
 

@@ -52,7 +52,7 @@ jobs:
   build:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
-    # GitHub's default is 6 hours. A hung step on six runners is an
+    # GitHub's default is 6 hours. A hung step on five runners is an
     # expensive way to learn nothing, and the first run of this matrix did
     # exactly that -- see the `Add musl target` comment below. The slowest
     # healthy leg so far is macOS on a cold cache at well under 30 minutes.
@@ -88,9 +88,7 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-15-intel
             bin: udapcfg
-          - target: aarch64-apple-darwin
-            runner: macos-latest
-            bin: udapcfg
+          # aarch64-apple-darwin: see decisions/2026-11-19-drop-aarch64-apple-darwin-ci-leg.md
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             bin: udapcfg.exe
@@ -107,7 +105,7 @@ jobs:
           # mise.toml stays the single source of truth for versions, but
           # this job needs only the toolchain and the test runner. Naming
           # them skips building cargo-deny, cargo-audit and cargo-mutants
-          # from source on six runners, five of which have no warm cache.
+          # from source on five runners, four of which have no warm cache.
           install_args: rust cargo:cargo-nextest
       # musl-gcc. Rust can self-link musl, but the C runtime bits are not
       # guaranteed present on the runner image.
