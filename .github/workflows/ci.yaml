@@ -27,7 +27,7 @@ jobs:
           # disagree. On 2026-09-08 the channel advertised 2026.9.3 while
           # the newest published release was 2026.9.2, so every run 404'd.
           # Renovate moves it, in every job at once, like the toolchain.
-          version: 2026.11.10
+          version: 2026.11.11
       # Only the platform-independent gates live here. Formatting and the
       # supply-chain audit read source and metadata, not cfg'd code, so
       # running them once is running them everywhere. Clippy and the test
@@ -101,7 +101,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d  # v5.2.9
         with:
-          version: 2026.11.10
+          version: 2026.11.11
           # mise.toml stays the single source of truth for versions, but
           # this job needs only the toolchain and the test runner. Naming
           # them skips building cargo-deny, cargo-audit and cargo-mutants
@@ -157,7 +157,7 @@ jobs:
       # Same mise pin as the check job -- see the comment there.
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d  # v5.2.9
         with:
-          version: 2026.11.10
+          version: 2026.11.11
       - uses: j178/prek-action@7b101f8338a08d2bd6fdb3625e4e7692428763a3  # v3.1.1
         env:
           # renovate: datasource=github-releases depName=j178/prek extractVersion=^v(?<version>.+)$
